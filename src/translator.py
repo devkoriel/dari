@@ -48,19 +48,25 @@ class Translator:
     ) -> None:
         self._client = AsyncAnthropic(api_key=api_key)
         self._model = model
-        self._buffer: deque[ContextEntry] = deque(maxlen=max_context)
+        self._max_context = max_context
+        self._buffers: dict[int, deque[ContextEntry]] = {}
+
+    def _get_buffer(self, chat_id: int) -> deque[ContextEntry]:
+        if chat_id not in self._buffers:
+            self._buffers[chat_id] = deque(maxlen=self._max_context)
+        return self._buffers[chat_id]
 
     def add_message(
-        self, sender: str, original: str, translation: str
+        self, chat_id: int, sender: str, original: str, translation: str
     ) -> None:
-        self._buffer.append(
+        self._get_buffer(chat_id).append(
             ContextEntry(sender=sender, original=original, translation=translation)
         )
 
-    def get_context(self) -> list[dict[str, str]]:
+    def get_context(self, chat_id: int) -> list[dict[str, str]]:
         return [
             {"sender": e.sender, "original": e.original, "translation": e.translation}
-            for e in self._buffer
+            for e in self._get_buffer(chat_id)
         ]
 
     def should_skip(self, text: str) -> bool:
@@ -74,11 +80,11 @@ class Translator:
         return False
 
     def _build_messages(
-        self, text: str, target_lang: str
+        self, chat_id: int, text: str, target_lang: str
     ) -> list[dict[str, str]]:
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         context_lines = []
-        for entry in self._buffer:
+        for entry in self._get_buffer(chat_id):
             context_lines.append(
                 f"{entry.sender}: {entry.original} → {entry.translation}"
             )
@@ -91,11 +97,11 @@ class Translator:
         )
         return [{"role": "user", "content": user_content}]
 
-    async def translate(self, text: str, target_lang: str) -> str | None:
+    async def translate(self, chat_id: int, text: str, target_lang: str) -> str | None:
         if self.should_skip(text):
             return None
 
-        messages = self._build_messages(text, target_lang)
+        messages = self._build_messages(chat_id, text, target_lang)
 
         try:
             response = await self._client.messages.create(

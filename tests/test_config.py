@@ -11,6 +11,7 @@ def _env(**overrides: str) -> dict[str, str]:
     base = {
         "TELEGRAM_BOT_TOKEN": "test-token",
         "ANTHROPIC_API_KEY": "test-key",
+        "ADMIN_USER_ID": "111",
         "USER_MAP": json.dumps({"111": "zh-TW", "222": "ko"}),
     }
     return {**base, **overrides}
@@ -22,6 +23,7 @@ class TestLoadConfig:
             cfg = load_config()
             assert cfg.telegram_token == "test-token"
             assert cfg.anthropic_api_key == "test-key"
+            assert cfg.admin_user_id == "111"
             assert cfg.user_map == {"111": "zh-TW", "222": "ko"}
             assert cfg.claude_model == "claude-haiku-4-5-20251001"
 
@@ -44,6 +46,13 @@ class TestLoadConfig:
             with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
                 load_config()
 
+    def test_missing_admin_user_id_raises(self):
+        env = _env()
+        del env["ADMIN_USER_ID"]
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="ADMIN_USER_ID"):
+                load_config()
+
     def test_invalid_user_map_raises(self):
         with patch.dict(os.environ, _env(USER_MAP="not-json"), clear=True):
             with pytest.raises(ValueError, match="USER_MAP"):
@@ -55,3 +64,9 @@ class TestLoadConfig:
             assert cfg.target_language("111") == "zh-TW"
             assert cfg.target_language("222") == "ko"
             assert cfg.target_language("999") is None
+
+    def test_is_admin(self):
+        with patch.dict(os.environ, _env(), clear=True):
+            cfg = load_config()
+            assert cfg.is_admin("111") is True
+            assert cfg.is_admin("222") is False

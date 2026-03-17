@@ -4,31 +4,42 @@ import pytest
 
 from src.translator import Translator
 
+CHAT_ID = 12345
+
 
 class TestContextBuffer:
     def test_empty_buffer(self):
         t = Translator(api_key="test", model="test-model")
-        assert t.get_context() == []
+        assert t.get_context(CHAT_ID) == []
 
     def test_add_message(self):
         t = Translator(api_key="test", model="test-model")
-        t.add_message(sender="Alice", original="hello", translation="你好")
-        ctx = t.get_context()
+        t.add_message(chat_id=CHAT_ID, sender="Alice", original="hello", translation="你好")
+        ctx = t.get_context(CHAT_ID)
         assert len(ctx) == 1
         assert ctx[0] == {"sender": "Alice", "original": "hello", "translation": "你好"}
 
     def test_buffer_max_size(self):
         t = Translator(api_key="test", model="test-model", max_context=3)
         for i in range(5):
-            t.add_message(sender="User", original=f"msg{i}", translation=f"tr{i}")
-        ctx = t.get_context()
+            t.add_message(chat_id=CHAT_ID, sender="User", original=f"msg{i}", translation=f"tr{i}")
+        ctx = t.get_context(CHAT_ID)
         assert len(ctx) == 3
         assert ctx[0]["original"] == "msg2"
 
+    def test_per_chat_isolation(self):
+        t = Translator(api_key="test", model="test-model")
+        t.add_message(chat_id=1, sender="Alice", original="hello", translation="你好")
+        t.add_message(chat_id=2, sender="Bob", original="hi", translation="嗨")
+        assert len(t.get_context(1)) == 1
+        assert len(t.get_context(2)) == 1
+        assert t.get_context(1)[0]["sender"] == "Alice"
+        assert t.get_context(2)[0]["sender"] == "Bob"
+
     def test_build_prompt_includes_context(self):
         t = Translator(api_key="test", model="test-model")
-        t.add_message(sender="Alice", original="hello", translation="你好")
-        messages = t._build_messages("Bob said hi", "ko")
+        t.add_message(chat_id=CHAT_ID, sender="Alice", original="hello", translation="你好")
+        messages = t._build_messages(CHAT_ID, "Bob said hi", "ko")
         user_content = messages[0]["content"]
         assert "hello" in user_content
         assert "你好" in user_content
@@ -72,7 +83,7 @@ class TestTranslate:
 
         with patch.object(t._client, "messages") as mock_messages:
             mock_messages.create = AsyncMock(return_value=mock_response)
-            result = await t.translate("hello world", "zh-TW")
+            result = await t.translate(CHAT_ID, "hello world", "zh-TW")
 
         assert result == "你好世界"
         mock_messages.create.assert_called_once()
@@ -83,7 +94,7 @@ class TestTranslate:
     @pytest.mark.asyncio
     async def test_translate_returns_none_on_skip(self):
         t = Translator(api_key="test", model="test-model")
-        result = await t.translate("😀🎉", "zh-TW")
+        result = await t.translate(CHAT_ID, "😀🎉", "zh-TW")
         assert result is None
 
     @pytest.mark.asyncio
@@ -91,5 +102,5 @@ class TestTranslate:
         t = Translator(api_key="test", model="test-model")
         with patch.object(t._client, "messages") as mock_messages:
             mock_messages.create = AsyncMock(side_effect=Exception("API down"))
-            result = await t.translate("hello", "zh-TW")
+            result = await t.translate(CHAT_ID, "hello", "zh-TW")
         assert result is None
