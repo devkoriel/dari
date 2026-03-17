@@ -41,7 +41,6 @@ class TestContextBuffer:
         for i in range(MAX_CHATS + 5):
             t.add_message(chat_id=i, sender="User", original=f"msg{i}", translation=f"tr{i}")
         assert len(t._buffers) == MAX_CHATS
-        # oldest chats (0-4) should be evicted
         assert 0 not in t._buffers
         assert MAX_CHATS + 4 in t._buffers
 
@@ -54,6 +53,38 @@ class TestContextBuffer:
         assert "你好" in user_content
         assert "Bob said hi" in user_content
         assert "Korean" in user_content or "한국어" in user_content
+
+    def test_build_prompt_includes_sender_name(self):
+        t = Translator(api_key="test", model="test-model")
+        messages = t._build_messages(CHAT_ID, "hello", "ko", sender_name="Jinsoo")
+        user_content = messages[0]["content"]
+        assert "Jinsoo" in user_content
+
+
+class TestSameLanguageDetection:
+    def test_korean_to_korean_skips(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.is_same_language("안녕하세요", "ko") is True
+
+    def test_chinese_to_chinese_skips(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.is_same_language("你好嗎", "zh-TW") is True
+
+    def test_english_to_english_skips(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.is_same_language("hello world", "en") is True
+
+    def test_korean_to_chinese_translates(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.is_same_language("안녕하세요", "zh-TW") is False
+
+    def test_chinese_to_korean_translates(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.is_same_language("你好嗎", "ko") is False
+
+    def test_english_to_korean_translates(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.is_same_language("hello", "ko") is False
 
 
 class TestShouldSkip:
@@ -125,6 +156,7 @@ class TestTranslate:
             mock_messages.create = AsyncMock(side_effect=Exception("API down"))
             result = await t.translate(CHAT_ID, "hello", "zh-TW")
         assert result is None
+        assert t.stats["errors"] == 1
 
     @pytest.mark.asyncio
     async def test_translate_returns_none_on_empty_response(self):
@@ -136,3 +168,26 @@ class TestTranslate:
             mock_messages.create = AsyncMock(return_value=mock_response)
             result = await t.translate(CHAT_ID, "hello", "zh-TW")
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_translate_tracks_api_calls(self):
+        t = Translator(api_key="test", model="test-model")
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="你好")]
+
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(return_value=mock_response)
+            await t.translate(CHAT_ID, "hello", "zh-TW")
+            await t.translate(CHAT_ID, "world", "zh-TW")
+
+        assert t.stats["api_calls"] == 2
+
+
+class TestStats:
+    def test_initial_stats(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.stats["messages"] == 0
+        assert t.stats["api_calls"] == 0
+        assert t.stats["errors"] == 0
+        assert t.stats["skipped_same_lang"] == 0

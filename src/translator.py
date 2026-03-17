@@ -15,14 +15,28 @@ LANGUAGE_NAMES = {
     "en": "English",
 }
 
-SYSTEM_PROMPT = """You are a translator in a group chat between a Korean speaker and a Traditional Chinese (繁體中文) speaker.
+SYSTEM_PROMPT = """You are a real-time translator embedded in a group chat between a Korean speaker (Jinsoo) and a Traditional Chinese (繁體中文) speaker (敏甄). English may also appear.
 
-Rules:
-- Output ONLY the translation. No labels, no explanations, no quotation marks.
-- Translate naturally and conversationally, matching the tone of the original.
-- Use Traditional Chinese (繁體中文), never Simplified Chinese.
-- Use conversation context to resolve pronouns, slang, and abbreviations.
-- If the message contains mixed languages, translate the entire message to the target language."""
+Your role:
+- Translate each message so every participant can understand, preserving the speaker's tone, emotion, and intent.
+- Output ONLY the translated text. No labels, no explanations, no quotation marks, no "Translation:" prefix.
+
+Translation quality rules:
+- Use natural, conversational language — translate how a native speaker would actually say it, not word-for-word.
+- Preserve emotional tone: playful stays playful, serious stays serious, cute stays cute.
+- Korean honorifics/speech levels: match the original formality (반말 vs 존댓말). When translating TO Korean, use 반말 for casual chat.
+- Traditional Chinese (繁體中文) ONLY — never output Simplified Chinese (简体).
+- Slang, abbreviations, internet speak: translate the meaning, not the literal words. (e.g., ㅋㅋ → 哈哈, 哈哈哈 → ㅋㅋㅋ, ㄱㅅ → 감사 → 謝啦)
+- Onomatopoeia and expressions: adapt to the target language's equivalents (e.g., ㅠㅠ → QQ, 嗚嗚 → ㅠㅠ)
+- Keep proper nouns, brand names, and technical terms as-is unless there's a well-known localized form.
+- If the message contains mixed languages, translate ALL of it to the target language.
+- Use the conversation context to resolve ambiguous pronouns (he/she/it), references, and implied subjects.
+- For very short messages (reactions, acknowledgments like "ㅋㅋ", "哈哈", "ok"), still translate them naturally.
+
+Context usage:
+- Recent conversation history is provided. Use it to maintain coherence across messages.
+- If someone references something said earlier, make sure the translation reflects that connection.
+- Understand relationship context: this is a couple's conversation, so terms of endearment and intimate language should be translated appropriately."""
 
 MAX_INPUT_LENGTH = 2000
 MAX_CHATS = 100
@@ -43,12 +57,18 @@ def _has_translatable_text(text: str) -> bool:
 
 
 def detect_source_language(text: str) -> str:
+    ko_count = 0
+    zh_count = 0
     for ch in text:
         cp = ord(ch)
         if 0xAC00 <= cp <= 0xD7AF or 0x3130 <= cp <= 0x318F:
-            return "ko"
-        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
-            return "zh-TW"
+            ko_count += 1
+        elif 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+            zh_count += 1
+    if ko_count > 0 and ko_count >= zh_count:
+        return "ko"
+    if zh_count > 0:
+        return "zh-TW"
     return "en"
 
 
@@ -70,6 +90,7 @@ class Translator:
         self._model = model
         self._max_context = max_context
         self._buffers: OrderedDict[int, deque[ContextEntry]] = OrderedDict()
+        self.stats: dict[str, int] = {"messages": 0, "api_calls": 0, "errors": 0, "skipped_same_lang": 0}
 
     def _get_buffer(self, chat_id: int) -> deque[ContextEntry]:
         if chat_id in self._buffers:
@@ -93,6 +114,12 @@ class Translator:
             for e in self._get_buffer(chat_id)
         ]
 
+    def is_same_language(self, text: str, target_lang: str) -> bool:
+        source = detect_source_language(text)
+        if target_lang == "zh-TW":
+            return source == "zh-TW"
+        return source == target_lang
+
     def should_skip(self, text: str) -> bool:
         stripped = text.strip()
         if not stripped:
@@ -105,7 +132,7 @@ class Translator:
         return False
 
     def _build_messages(
-        self, chat_id: int, text: str, target_lang: str
+        self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
     ) -> list[dict[str, str]]:
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         context_lines = []
@@ -116,14 +143,18 @@ class Translator:
 
         context_block = "\n".join(context_lines) if context_lines else "(no prior messages)"
 
+        sender_info = f" (from {sender_name})" if sender_name else ""
         user_content = (
             f"Recent conversation:\n{context_block}\n\n"
-            f"Translate the following message to {lang_name}:\n{text}"
+            f"Translate the following message{sender_info} to {lang_name}:\n{text}"
         )
         return [{"role": "user", "content": user_content}]
 
-    async def translate(self, chat_id: int, text: str, target_lang: str) -> str | None:
-        messages = self._build_messages(chat_id, text, target_lang)
+    async def translate(
+        self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
+    ) -> str | None:
+        self.stats["api_calls"] += 1
+        messages = self._build_messages(chat_id, text, target_lang, sender_name)
 
         try:
             response = await self._client.messages.create(
@@ -140,5 +171,6 @@ class Translator:
             label = LANG_LABELS.get(source_lang, "")
             return f"{label} {translation}" if label else translation
         except Exception:
+            self.stats["errors"] += 1
             log.exception("translation_failed", target_lang=target_lang)
             return None

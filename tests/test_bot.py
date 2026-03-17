@@ -24,6 +24,7 @@ def _make_text_update(user_id: int, text: str, chat_id: int = 12345, first_name:
     update.message.text = text
     update.message.caption = None
     update.message.chat.id = chat_id
+    update.message.message_id = 42
     update.message.reply_text = AsyncMock()
     return update
 
@@ -35,6 +36,7 @@ def _make_caption_update(user_id: int, caption: str, chat_id: int = 12345, first
     update.message.text = None
     update.message.caption = caption
     update.message.chat.id = chat_id
+    update.message.message_id = 43
     update.message.reply_text = AsyncMock()
     return update
 
@@ -42,8 +44,9 @@ def _make_caption_update(user_id: int, caption: str, chat_id: int = 12345, first
 class TestHandleMessage:
     def _get_message_handler(self, config):
         app = create_app(config)
-        # Handlers: [0]=ChatMemberHandler, [1]=CommandHandler(/lang), [2]=MessageHandler(text), [3]=MessageHandler(voice)
-        return app.handlers[0][2]
+        # Handlers: [0]=ChatMemberHandler, [1]=CommandHandler(/lang), [2]=CommandHandler(/stats),
+        #           [3]=MessageHandler(text), [4]=MessageHandler(voice)
+        return app.handlers[0][3]
 
     @pytest.mark.asyncio
     async def test_ignores_unknown_user(self, config):
@@ -74,9 +77,10 @@ class TestHandleMessage:
         update = _make_text_update(user_id=111, text="안녕하세요", first_name="Koriel")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="🇰🇷 你好"):
-            await handler.callback(update, MagicMock())
+            with patch("src.bot.Translator.is_same_language", return_value=False):
+                await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_called_once_with("🇰🇷 你好")
+        update.message.reply_text.assert_called_once_with("🇰🇷 你好", reply_to_message_id=42)
 
     @pytest.mark.asyncio
     async def test_translates_photo_caption(self, config):
@@ -84,9 +88,10 @@ class TestHandleMessage:
         update = _make_caption_update(user_id=222, caption="好漂亮", first_name="GF")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="🇹🇼 예쁘다"):
-            await handler.callback(update, MagicMock())
+            with patch("src.bot.Translator.is_same_language", return_value=False):
+                await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_called_once_with("🇹🇼 예쁘다")
+        update.message.reply_text.assert_called_once_with("🇹🇼 예쁘다", reply_to_message_id=43)
 
     @pytest.mark.asyncio
     async def test_no_reply_when_translation_none(self, config):
@@ -94,15 +99,28 @@ class TestHandleMessage:
         update = _make_text_update(user_id=111, text="hello")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value=None):
+            with patch("src.bot.Translator.is_same_language", return_value=False):
+                await handler.callback(update, MagicMock())
+
+        update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_same_language(self, config):
+        handler = self._get_message_handler(config)
+        # User 111 targets zh-TW, sending Chinese text should skip
+        update = _make_text_update(user_id=111, text="你好嗎")
+
+        with patch("src.bot.Translator.translate", new_callable=AsyncMock) as mock_translate:
             await handler.callback(update, MagicMock())
 
+        mock_translate.assert_not_called()
         update.message.reply_text.assert_not_called()
 
 
 class TestAdminGate:
     def _get_member_handler(self, config):
         app = create_app(config)
-        return app.handlers[0][0]  # ChatMemberHandler is always first
+        return app.handlers[0][0]
 
     @pytest.mark.asyncio
     async def test_leaves_chat_if_non_admin_invites(self, config):
