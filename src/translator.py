@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unicodedata
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 
 import structlog
@@ -23,13 +23,16 @@ Rules:
 - Use conversation context to resolve pronouns, slang, and abbreviations.
 - If the message contains mixed languages, translate the entire message to the target language."""
 
+MAX_INPUT_LENGTH = 2000
+MAX_CHATS = 100
 
-def _is_emoji_only(text: str) -> bool:
+
+def _has_translatable_text(text: str) -> bool:
     for ch in text:
         cat = unicodedata.category(ch)
-        if cat.startswith("L") or cat.startswith("N"):
-            return False
-    return True
+        if cat.startswith("L"):
+            return True
+    return False
 
 
 @dataclass
@@ -49,10 +52,14 @@ class Translator:
         self._client = AsyncAnthropic(api_key=api_key)
         self._model = model
         self._max_context = max_context
-        self._buffers: dict[int, deque[ContextEntry]] = {}
+        self._buffers: OrderedDict[int, deque[ContextEntry]] = OrderedDict()
 
     def _get_buffer(self, chat_id: int) -> deque[ContextEntry]:
-        if chat_id not in self._buffers:
+        if chat_id in self._buffers:
+            self._buffers.move_to_end(chat_id)
+        else:
+            if len(self._buffers) >= MAX_CHATS:
+                self._buffers.popitem(last=False)
             self._buffers[chat_id] = deque(maxlen=self._max_context)
         return self._buffers[chat_id]
 
@@ -73,9 +80,10 @@ class Translator:
         stripped = text.strip()
         if not stripped:
             return True
-        if stripped.isdigit():
+        if not _has_translatable_text(stripped):
             return True
-        if _is_emoji_only(stripped):
+        if len(stripped) > MAX_INPUT_LENGTH:
+            log.warning("message_too_long", length=len(stripped))
             return True
         return False
 
@@ -98,9 +106,6 @@ class Translator:
         return [{"role": "user", "content": user_content}]
 
     async def translate(self, chat_id: int, text: str, target_lang: str) -> str | None:
-        if self.should_skip(text):
-            return None
-
         messages = self._build_messages(chat_id, text, target_lang)
 
         try:
@@ -110,6 +115,9 @@ class Translator:
                 system=SYSTEM_PROMPT,
                 messages=messages,
             )
+            if not response.content:
+                log.warning("empty_api_response", chat_id=chat_id)
+                return None
             return response.content[0].text.strip()
         except Exception:
             log.exception("translation_failed", target_lang=target_lang)

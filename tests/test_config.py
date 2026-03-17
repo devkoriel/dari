@@ -58,6 +58,11 @@ class TestLoadConfig:
             with pytest.raises(ValueError, match="USER_MAP"):
                 load_config()
 
+    def test_unsupported_language_raises(self):
+        with patch.dict(os.environ, _env(USER_MAP='{"111":"fr"}'), clear=True):
+            with pytest.raises(ValueError, match="Unsupported language"):
+                load_config()
+
     def test_target_language_lookup(self):
         with patch.dict(os.environ, _env(), clear=True):
             cfg = load_config()

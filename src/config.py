@@ -42,6 +42,11 @@ def load_config() -> Config:
     if not isinstance(user_map, dict):
         raise ValueError("USER_MAP must be a JSON object")
 
+    supported_languages = {"ko", "zh-TW"}
+    for uid, lang in user_map.items():
+        if lang not in supported_languages:
+            raise ValueError(f"Unsupported language '{lang}' for user {uid}. Supported: {supported_languages}")
+
     model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
     return Config(

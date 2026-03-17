@@ -52,18 +52,13 @@ def create_app(config: Config) -> Application:
 
         log.info("joined_chat", chat_id=chat_id, invited_by=inviter_id)
 
-    async def handle_message(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    async def _translate_and_reply(
+        update: Update,
+        chat_id: int,
+        user_id: str,
+        sender_name: str,
+        text: str,
     ) -> None:
-        message = update.message
-        if message is None or message.text is None or message.from_user is None:
-            return
-
-        user_id = str(message.from_user.id)
-        sender_name = message.from_user.first_name or "Unknown"
-        chat_id = message.chat.id
-        text = message.text
-
         target_lang = config.target_language(user_id)
         if target_lang is None:
             return
@@ -84,21 +79,39 @@ def create_app(config: Config) -> Application:
             translation=translation,
         )
 
-        await message.reply_text(translation)
+        await update.message.reply_text(translation)
         log.info(
             "translated",
             sender=sender_name,
             chat_id=chat_id,
             target=target_lang,
-            original=text[:50],
-            translation=translation[:50],
         )
+
+    async def handle_message(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+
+        text = message.text or message.caption
+        if not text:
+            return
+
+        user_id = str(message.from_user.id)
+        sender_name = message.from_user.first_name or "Unknown"
+        chat_id = message.chat.id
+
+        await _translate_and_reply(update, chat_id, user_id, sender_name, text)
 
     app = Application.builder().token(config.telegram_token).build()
     app.add_handler(
         ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
     )
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        MessageHandler(
+            (filters.TEXT | filters.CAPTION) & ~filters.COMMAND,
+            handle_message,
+        )
     )
     return app

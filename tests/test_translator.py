@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.translator import Translator
+from src.translator import Translator, MAX_INPUT_LENGTH, MAX_CHATS
 
 CHAT_ID = 12345
 
@@ -36,6 +36,15 @@ class TestContextBuffer:
         assert t.get_context(1)[0]["sender"] == "Alice"
         assert t.get_context(2)[0]["sender"] == "Bob"
 
+    def test_lru_eviction(self):
+        t = Translator(api_key="test", model="test-model")
+        for i in range(MAX_CHATS + 5):
+            t.add_message(chat_id=i, sender="User", original=f"msg{i}", translation=f"tr{i}")
+        assert len(t._buffers) == MAX_CHATS
+        # oldest chats (0-4) should be evicted
+        assert 0 not in t._buffers
+        assert MAX_CHATS + 4 in t._buffers
+
     def test_build_prompt_includes_context(self):
         t = Translator(api_key="test", model="test-model")
         t.add_message(chat_id=CHAT_ID, sender="Alice", original="hello", translation="你好")
@@ -56,6 +65,15 @@ class TestShouldSkip:
         t = Translator(api_key="test", model="test-model")
         assert t.should_skip("12345") is True
 
+    def test_skip_empty(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("") is True
+        assert t.should_skip("   ") is True
+
+    def test_skip_too_long(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("a" * (MAX_INPUT_LENGTH + 1)) is True
+
     def test_no_skip_text(self):
         t = Translator(api_key="test", model="test-model")
         assert t.should_skip("hello") is False
@@ -71,6 +89,15 @@ class TestShouldSkip:
     def test_no_skip_ok(self):
         t = Translator(api_key="test", model="test-model")
         assert t.should_skip("ok") is False
+
+    def test_no_skip_punctuation_with_text(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("ok!!!") is False
+
+    def test_skip_punctuation_only(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("???") is True
+        assert t.should_skip("...") is True
 
 
 class TestTranslate:
@@ -92,15 +119,20 @@ class TestTranslate:
         assert call_kwargs["max_tokens"] == 1024
 
     @pytest.mark.asyncio
-    async def test_translate_returns_none_on_skip(self):
-        t = Translator(api_key="test", model="test-model")
-        result = await t.translate(CHAT_ID, "😀🎉", "zh-TW")
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_translate_returns_none_on_api_error(self):
         t = Translator(api_key="test", model="test-model")
         with patch.object(t._client, "messages") as mock_messages:
             mock_messages.create = AsyncMock(side_effect=Exception("API down"))
+            result = await t.translate(CHAT_ID, "hello", "zh-TW")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_translate_returns_none_on_empty_response(self):
+        t = Translator(api_key="test", model="test-model")
+        mock_response = MagicMock()
+        mock_response.content = []
+
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(return_value=mock_response)
             result = await t.translate(CHAT_ID, "hello", "zh-TW")
         assert result is None
