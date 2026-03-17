@@ -144,6 +144,23 @@ class Translator:
         )
         return [{"role": "user", "content": user_content}]
 
+    async def ask_claude(self, system: str, user_msg: str, max_tokens: int = 512) -> str | None:
+        self.stats["api_calls"] += 1
+        try:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            if not response.content:
+                return None
+            return response.content[0].text.strip()
+        except Exception:
+            self.stats["errors"] += 1
+            log.exception("ask_claude_failed")
+            return None
+
     @staticmethod
     def _clean_response(raw: str) -> str:
         """Strip any leaked reasoning or meta-text from Claude's response."""

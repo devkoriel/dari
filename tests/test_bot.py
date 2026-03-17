@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.ext import CommandHandler, MessageHandler
 
 from src.config import Config
 from src.bot import create_app
@@ -15,6 +16,27 @@ def config():
         user_map={"111": "zh-TW", "222": "ko"},
         claude_model="test-model",
     )
+
+
+def _find_handler(app, command=None, handler_type=None):
+    for group_handlers in app.handlers.values():
+        for h in group_handlers:
+            if command and isinstance(h, CommandHandler) and command in h.commands:
+                return h
+            if handler_type and isinstance(h, handler_type) and not isinstance(h, CommandHandler):
+                return h
+    return None
+
+
+def _find_message_handler(app):
+    """Find the text/caption MessageHandler (not voice)."""
+    for group_handlers in app.handlers.values():
+        for h in group_handlers:
+            if isinstance(h, MessageHandler) and not isinstance(h, CommandHandler):
+                # The text handler callback is named handle_message
+                if h.callback.__name__ == "handle_message":
+                    return h
+    return None
 
 
 def _make_text_update(user_id: int, text: str, chat_id: int = 12345, first_name: str = "Test"):
@@ -41,30 +63,39 @@ def _make_caption_update(user_id: int, caption: str, chat_id: int = 12345, first
     return update
 
 
+def _make_command_update(user_id: int, args: list[str] | None = None, first_name: str = "Test"):
+    update = MagicMock()
+    update.message.from_user.id = user_id
+    update.message.from_user.first_name = first_name
+    update.message.chat.id = 12345
+    update.message.reply_text = AsyncMock()
+    context = MagicMock()
+    context.args = args or []
+    return update, context
+
+
 class TestHandleMessage:
-    def _get_message_handler(self, config):
+    def _get_handler(self, config):
         app = create_app(config)
-        # Handlers: [0]=ChatMemberHandler, [1]=CommandHandler(/lang), [2]=CommandHandler(/stats),
-        #           [3]=MessageHandler(text), [4]=MessageHandler(voice)
-        return app.handlers[0][3]
+        return _find_message_handler(app)
 
     @pytest.mark.asyncio
     async def test_ignores_unknown_user(self, config):
-        handler = self._get_message_handler(config)
+        handler = self._get_handler(config)
         update = _make_text_update(user_id=999, text="hello")
         await handler.callback(update, MagicMock())
         update.message.reply_text.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ignores_emoji_only(self, config):
-        handler = self._get_message_handler(config)
+        handler = self._get_handler(config)
         update = _make_text_update(user_id=111, text="😀🎉")
         await handler.callback(update, MagicMock())
         update.message.reply_text.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ignores_none_from_user(self, config):
-        handler = self._get_message_handler(config)
+        handler = self._get_handler(config)
         update = MagicMock()
         update.message.from_user = None
         update.message.text = "hello"
@@ -73,7 +104,7 @@ class TestHandleMessage:
 
     @pytest.mark.asyncio
     async def test_translates_known_user(self, config):
-        handler = self._get_message_handler(config)
+        handler = self._get_handler(config)
         update = _make_text_update(user_id=111, text="안녕하세요", first_name="Koriel")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="🇰🇷 你好"):
@@ -84,7 +115,7 @@ class TestHandleMessage:
 
     @pytest.mark.asyncio
     async def test_translates_photo_caption(self, config):
-        handler = self._get_message_handler(config)
+        handler = self._get_handler(config)
         update = _make_caption_update(user_id=222, caption="好漂亮", first_name="GF")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="🇹🇼 예쁘다"):
@@ -95,7 +126,7 @@ class TestHandleMessage:
 
     @pytest.mark.asyncio
     async def test_no_reply_when_translation_none(self, config):
-        handler = self._get_message_handler(config)
+        handler = self._get_handler(config)
         update = _make_text_update(user_id=111, text="hello")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value=None):
@@ -106,8 +137,7 @@ class TestHandleMessage:
 
     @pytest.mark.asyncio
     async def test_skips_same_language(self, config):
-        handler = self._get_message_handler(config)
-        # User 111 targets zh-TW, sending Chinese text should skip
+        handler = self._get_handler(config)
         update = _make_text_update(user_id=111, text="你好嗎")
 
         with patch("src.bot.Translator.translate", new_callable=AsyncMock) as mock_translate:
@@ -118,13 +148,13 @@ class TestHandleMessage:
 
 
 class TestAdminGate:
-    def _get_member_handler(self, config):
+    def _get_handler(self, config):
         app = create_app(config)
         return app.handlers[0][0]
 
     @pytest.mark.asyncio
     async def test_leaves_chat_if_non_admin_invites(self, config):
-        handler = self._get_member_handler(config)
+        handler = self._get_handler(config)
 
         update = MagicMock()
         update.my_chat_member.from_user.id = 999
@@ -139,7 +169,7 @@ class TestAdminGate:
 
     @pytest.mark.asyncio
     async def test_stays_if_admin_invites(self, config):
-        handler = self._get_member_handler(config)
+        handler = self._get_handler(config)
 
         update = MagicMock()
         update.my_chat_member.from_user.id = 111
@@ -151,3 +181,115 @@ class TestAdminGate:
 
         await handler.callback(update, context)
         context.bot.leave_chat.assert_not_called()
+
+
+class TestLearnMode:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="learn")
+
+    @pytest.mark.asyncio
+    async def test_learn_on(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["on"])
+        await handler.callback(update, context)
+        update.message.reply_text.assert_called_once()
+        assert "ON" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_learn_off(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["off"])
+        await handler.callback(update, context)
+        update.message.reply_text.assert_called_once()
+        assert "OFF" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_learn_no_args_shows_status(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=[])
+        await handler.callback(update, context)
+        update.message.reply_text.assert_called_once()
+        assert "Learn mode" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_learn_ignores_unknown_user(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=999, args=["on"])
+        await handler.callback(update, context)
+        update.message.reply_text.assert_not_called()
+
+
+class TestSayCommand:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="say")
+
+    @pytest.mark.asyncio
+    async def test_say_no_args(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=[])
+        await handler.callback(update, context)
+        assert "Usage" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_say_with_phrase(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["사랑해"])
+
+        with patch("src.bot.Translator.ask_claude", new_callable=AsyncMock, return_value="我愛你 (wǒ ài nǐ)"):
+            await handler.callback(update, context)
+
+        assert "我愛你" in update.message.reply_text.call_args[0][0]
+
+
+class TestTeachCommand:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="teach")
+
+    @pytest.mark.asyncio
+    async def test_teach_no_args(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=[])
+        await handler.callback(update, context)
+        assert "Usage" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_teach_with_word(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["撒嬌"])
+
+        with patch("src.bot.Translator.ask_claude", new_callable=AsyncMock, return_value="撒嬌 means..."):
+            await handler.callback(update, context)
+
+        assert "撒嬌" in update.message.reply_text.call_args[0][0]
+
+
+class TestDDay:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="dday")
+
+    @pytest.mark.asyncio
+    async def test_dday_no_dates(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=[])
+        await handler.callback(update, context)
+        assert "No dates" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_dday_set(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["set", "2024-06-15", "Anniversary"])
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "Anniversary" in reply
+        assert "D+" in reply
+
+    @pytest.mark.asyncio
+    async def test_dday_invalid_date(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["set", "not-a-date"])
+        await handler.callback(update, context)
+        assert "Invalid" in update.message.reply_text.call_args[0][0]

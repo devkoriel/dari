@@ -13,6 +13,10 @@ class Config:
     admin_user_id: str
     claude_model: str = "claude-haiku-4-5-20251001"
     groq_api_key: str = ""
+    data_dir: str = "data"
+    daily_quote_hour: int = 9
+    daily_quote_minute: int = 0
+    anniversary_date: str = ""
 
     def target_language(self, user_id: str) -> str | None:
         return self.user_map.get(user_id)
@@ -50,6 +54,10 @@ def load_config() -> Config:
 
     model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     groq_api_key = os.environ.get("GROQ_API_KEY", "")
+    data_dir = os.environ.get("DATA_DIR", "data")
+    daily_quote_hour = int(os.environ.get("DAILY_QUOTE_HOUR", "9"))
+    daily_quote_minute = int(os.environ.get("DAILY_QUOTE_MINUTE", "0"))
+    anniversary_date = os.environ.get("ANNIVERSARY_DATE", "")
 
     return Config(
         telegram_token=token,
@@ -58,4 +66,8 @@ def load_config() -> Config:
         admin_user_id=admin_user_id,
         claude_model=model,
         groq_api_key=groq_api_key,
+        data_dir=data_dir,
+        daily_quote_hour=daily_quote_hour,
+        daily_quote_minute=daily_quote_minute,
+        anniversary_date=anniversary_date,
     )

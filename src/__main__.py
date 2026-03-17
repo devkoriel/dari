@@ -1,3 +1,4 @@
+import os
 import sys
 
 import structlog
@@ -26,6 +27,7 @@ def main() -> None:
         log.error("config_error", error=str(e))
         sys.exit(1)
 
+    os.makedirs(config.data_dir, exist_ok=True)
     log.info("starting_bot", model=config.claude_model, users=len(config.user_map))
 
     app = create_app(config)

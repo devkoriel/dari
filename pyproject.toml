@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Real-time Telegram translation bot using Claude Haiku"
 requires-python = ">=3.14"
 dependencies = [
-    "python-telegram-bot>=22.5",
+    "python-telegram-bot[job-queue]>=22.5",
     "anthropic>=0.52.0",
     "python-dotenv>=1.1.0",
     "structlog>=25.1.0",
