@@ -1,0 +1,788 @@
+# Telegram Translator Bot Implementation Plan
+
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build a Telegram bot that auto-translates messages between Korean/English and Traditional Chinese in a group chat, using Claude Haiku 4.5 with conversation context.
+
+**Architecture:** Python async app using `python-telegram-bot` for polling, `anthropic` SDK for translation via Claude Haiku 4.5. In-memory deque stores last 20 messages as context. User ID → target language mapping from `.env`.
+
+**Tech Stack:** Python 3.14, uv, python-telegram-bot, anthropic, python-dotenv, structlog, pytest, pytest-asyncio
+
+**Spec:** `README.md`
+
+---
+
+### Task 1: Project Scaffolding
+
+**Files:**
+- Create: `pyproject.toml`
+- Create: `.env.example`
+- Create: `.gitignore`
+- Create: `src/__init__.py`
+- Create: `tests/__init__.py`
+
+- [ ] **Step 1: Initialize git repo**
+
+```bash
+cd ~/Development/telegram-translator-bot
+git init
+```
+
+- [ ] **Step 2: Create pyproject.toml**
+
+```toml
+[project]
+name = "telegram-translator-bot"
+version = "0.1.0"
+description = "Real-time Telegram translation bot using Claude Haiku"
+requires-python = ">=3.14"
+dependencies = [
+    "python-telegram-bot>=22.5",
+    "anthropic>=0.52.0",
+    "python-dotenv>=1.1.0",
+    "structlog>=25.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+```
+
+- [ ] **Step 3: Create .gitignore**
+
+```
+.env
+__pycache__/
+*.pyc
+.venv/
+.python-version
+```
+
+- [ ] **Step 4: Create .env.example**
+
+```
+TELEGRAM_BOT_TOKEN=<from BotFather>
+ANTHROPIC_API_KEY=<your Anthropic key>
+CLAUDE_MODEL=claude-haiku-4-5-20251001
+USER_MAP={"123456":"zh-TW","789012":"ko"}
+```
+
+- [ ] **Step 5: Create empty __init__.py files**
+
+Create `src/__init__.py` and `tests/__init__.py` (empty files).
+
+- [ ] **Step 6: Install dependencies**
+
+```bash
+cd ~/Development/telegram-translator-bot
+uv sync --dev
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add pyproject.toml .gitignore .env.example src/__init__.py tests/__init__.py uv.lock
+git commit -m "chore: scaffold project with dependencies"
+```
+
+---
+
+### Task 2: Config Module
+
+**Files:**
+- Create: `src/config.py`
+- Create: `tests/test_config.py`
+
+- [ ] **Step 1: Write failing tests for config**
+
+```python
+# tests/test_config.py
+import json
+import os
+from unittest.mock import patch
+
+import pytest
+
+
+def _env(**overrides: str) -> dict[str, str]:
+    base = {
+        "TELEGRAM_BOT_TOKEN": "test-token",
+        "ANTHROPIC_API_KEY": "test-key",
+        "USER_MAP": json.dumps({"111": "zh-TW", "222": "ko"}),
+    }
+    return {**base, **overrides}
+
+
+class TestLoadConfig:
+    def test_loads_valid_config(self):
+        with patch.dict(os.environ, _env(), clear=True):
+            from src.config import load_config
+
+            cfg = load_config()
+            assert cfg.telegram_token == "test-token"
+            assert cfg.anthropic_api_key == "test-key"
+            assert cfg.user_map == {"111": "zh-TW", "222": "ko"}
+            assert cfg.claude_model == "claude-haiku-4-5-20251001"
+
+    def test_custom_model(self):
+        with patch.dict(os.environ, _env(CLAUDE_MODEL="claude-sonnet-4-5-20250514"), clear=True):
+            from src.config import load_config
+
+            cfg = load_config()
+            assert cfg.claude_model == "claude-sonnet-4-5-20250514"
+
+    def test_missing_token_raises(self):
+        env = _env()
+        del env["TELEGRAM_BOT_TOKEN"]
+        with patch.dict(os.environ, env, clear=True):
+            from src.config import load_config
+
+            with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
+                load_config()
+
+    def test_missing_api_key_raises(self):
+        env = _env()
+        del env["ANTHROPIC_API_KEY"]
+        with patch.dict(os.environ, env, clear=True):
+            from src.config import load_config
+
+            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+                load_config()
+
+    def test_invalid_user_map_raises(self):
+        with patch.dict(os.environ, _env(USER_MAP="not-json"), clear=True):
+            from src.config import load_config
+
+            with pytest.raises(ValueError, match="USER_MAP"):
+                load_config()
+
+    def test_target_language_lookup(self):
+        with patch.dict(os.environ, _env(), clear=True):
+            from src.config import load_config
+
+            cfg = load_config()
+            assert cfg.target_language("111") == "zh-TW"
+            assert cfg.target_language("222") == "ko"
+            assert cfg.target_language("999") is None
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+```bash
+uv run pytest tests/test_config.py -v
+```
+
+Expected: FAIL (module not found)
+
+- [ ] **Step 3: Implement config module**
+
+```python
+# src/config.py
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Config:
+    telegram_token: str
+    anthropic_api_key: str
+    user_map: dict[str, str]
+    claude_model: str = "claude-haiku-4-5-20251001"
+
+    def target_language(self, user_id: str) -> str | None:
+        return self.user_map.get(user_id)
+
+
+def load_config() -> Config:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise ValueError("TELEGRAM_BOT_TOKEN is required")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY is required")
+
+    user_map_raw = os.environ.get("USER_MAP", "{}")
+    try:
+        user_map = json.loads(user_map_raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"USER_MAP must be valid JSON: {e}") from e
+
+    if not isinstance(user_map, dict):
+        raise ValueError("USER_MAP must be a JSON object")
+
+    model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+
+    return Config(
+        telegram_token=token,
+        anthropic_api_key=api_key,
+        user_map=user_map,
+        claude_model=model,
+    )
+```
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+```bash
+uv run pytest tests/test_config.py -v
+```
+
+Expected: 6 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/config.py tests/test_config.py
+git commit -m "feat: add config module with env var loading and validation"
+```
+
+---
+
+### Task 3: Translator Module
+
+**Files:**
+- Create: `src/translator.py`
+- Create: `tests/test_translator.py`
+
+- [ ] **Step 1: Write failing tests for context buffer and prompt building**
+
+```python
+# tests/test_translator.py
+from unittest.mock import AsyncMock, patch, MagicMock
+
+import pytest
+
+from src.translator import Translator
+
+
+class TestContextBuffer:
+    def test_empty_buffer(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.get_context() == []
+
+    def test_add_message(self):
+        t = Translator(api_key="test", model="test-model")
+        t.add_message(sender="Alice", original="hello", translation="你好")
+        ctx = t.get_context()
+        assert len(ctx) == 1
+        assert ctx[0] == {"sender": "Alice", "original": "hello", "translation": "你好"}
+
+    def test_buffer_max_size(self):
+        t = Translator(api_key="test", model="test-model", max_context=3)
+        for i in range(5):
+            t.add_message(sender="User", original=f"msg{i}", translation=f"tr{i}")
+        ctx = t.get_context()
+        assert len(ctx) == 3
+        assert ctx[0]["original"] == "msg2"
+
+    def test_build_prompt_includes_context(self):
+        t = Translator(api_key="test", model="test-model")
+        t.add_message(sender="Alice", original="hello", translation="你好")
+        messages = t._build_messages("Bob said hi", "ko")
+        user_content = messages[0]["content"]
+        assert "hello" in user_content
+        assert "你好" in user_content
+        assert "Bob said hi" in user_content
+        assert "Korean" in user_content or "한국어" in user_content
+
+
+class TestShouldSkip:
+    def test_skip_emoji_only(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("😀🎉") is True
+
+    def test_skip_numbers_only(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("12345") is True
+
+    def test_no_skip_text(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("hello") is False
+
+    def test_no_skip_short_text(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("ㅋㅋ") is False
+
+
+class TestTranslate:
+    @pytest.mark.asyncio
+    async def test_translate_calls_api(self):
+        t = Translator(api_key="test", model="test-model")
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="你好世界")]
+
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(return_value=mock_response)
+            result = await t.translate("hello world", "zh-TW")
+
+        assert result == "你好世界"
+        mock_messages.create.assert_called_once()
+        call_kwargs = mock_messages.create.call_args.kwargs
+        assert call_kwargs["model"] == "test-model"
+        assert call_kwargs["max_tokens"] == 1024
+
+    @pytest.mark.asyncio
+    async def test_translate_returns_none_on_skip(self):
+        t = Translator(api_key="test", model="test-model")
+        result = await t.translate("😀🎉", "zh-TW")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_translate_returns_none_on_api_error(self):
+        t = Translator(api_key="test", model="test-model")
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(side_effect=Exception("API down"))
+            result = await t.translate("hello", "zh-TW")
+        assert result is None
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+```bash
+uv run pytest tests/test_translator.py -v
+```
+
+Expected: FAIL (module not found)
+
+- [ ] **Step 3: Implement translator module**
+
+```python
+# src/translator.py
+from __future__ import annotations
+
+import re
+from collections import deque
+from dataclasses import dataclass, field
+
+import structlog
+from anthropic import AsyncAnthropic
+
+log = structlog.get_logger()
+
+LANGUAGE_NAMES = {
+    "ko": "Korean (한국어)",
+    "zh-TW": "Traditional Chinese (繁體中文)",
+}
+
+SYSTEM_PROMPT = """You are a translator in a group chat between a Korean speaker and a Traditional Chinese (繁體中文) speaker.
+
+Rules:
+- Output ONLY the translation. No labels, no explanations, no quotation marks.
+- Translate naturally and conversationally, matching the tone of the original.
+- Use Traditional Chinese (繁體中文), never Simplified Chinese.
+- Use conversation context to resolve pronouns, slang, and abbreviations.
+- If the message contains mixed languages, translate the entire message to the target language."""
+
+EMOJI_PATTERN = re.compile(
+    r"^[\U0001F600-\U0001F9FF\U00002702-\U000027B0\U0000FE00-\U0000FE0F"
+    r"\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF"
+    r"\U0000200D\U00000020-\U0000002F\U0000003A-\U00000040\U0000005B-\U00000060"
+    r"\U0000007B-\U0000007E\U0000FE0F\U000020E3\U0001F1E0-\U0001F1FF]+$"
+)
+
+
+@dataclass
+class ContextEntry:
+    sender: str
+    original: str
+    translation: str
+
+
+class Translator:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        max_context: int = 20,
+    ) -> None:
+        self._client = AsyncAnthropic(api_key=api_key)
+        self._model = model
+        self._buffer: deque[ContextEntry] = deque(maxlen=max_context)
+
+    def add_message(
+        self, sender: str, original: str, translation: str
+    ) -> None:
+        self._buffer.append(
+            ContextEntry(sender=sender, original=original, translation=translation)
+        )
+
+    def get_context(self) -> list[dict[str, str]]:
+        return [
+            {"sender": e.sender, "original": e.original, "translation": e.translation}
+            for e in self._buffer
+        ]
+
+    def should_skip(self, text: str) -> bool:
+        stripped = text.strip()
+        if not stripped:
+            return True
+        if stripped.isdigit():
+            return True
+        if EMOJI_PATTERN.match(stripped):
+            return True
+        return False
+
+    def _build_messages(
+        self, text: str, target_lang: str
+    ) -> list[dict[str, str]]:
+        lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
+        context_lines = []
+        for entry in self._buffer:
+            context_lines.append(
+                f"{entry.sender}: {entry.original} → {entry.translation}"
+            )
+
+        context_block = "\n".join(context_lines) if context_lines else "(no prior messages)"
+
+        user_content = (
+            f"Recent conversation:\n{context_block}\n\n"
+            f"Translate the following message to {lang_name}:\n{text}"
+        )
+        return [{"role": "user", "content": user_content}]
+
+    async def translate(self, text: str, target_lang: str) -> str | None:
+        if self.should_skip(text):
+            return None
+
+        messages = self._build_messages(text, target_lang)
+
+        try:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                messages=messages,
+            )
+            return response.content[0].text.strip()
+        except Exception:
+            log.exception("translation_failed", target_lang=target_lang)
+            return None
+```
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+```bash
+uv run pytest tests/test_translator.py -v
+```
+
+Expected: 9 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/translator.py tests/test_translator.py
+git commit -m "feat: add translator module with context buffer and Claude API"
+```
+
+---
+
+### Task 4: Telegram Bot Module
+
+**Files:**
+- Create: `src/bot.py`
+- Create: `src/__main__.py`
+- Create: `tests/test_bot.py`
+
+- [ ] **Step 1: Write failing bot handler tests**
+
+```python
+# tests/test_bot.py
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.config import Config
+
+
+@pytest.fixture
+def config():
+    return Config(
+        telegram_token="test-token",
+        anthropic_api_key="test-key",
+        user_map={"111": "zh-TW", "222": "ko"},
+        claude_model="test-model",
+    )
+
+
+class TestHandleMessage:
+    @pytest.mark.asyncio
+    async def test_ignores_unknown_user(self, config):
+        from src.bot import create_app
+
+        app = create_app(config)
+        handler = app.handlers[0][0]
+
+        update = MagicMock()
+        update.message.from_user.id = 999
+        update.message.text = "hello"
+
+        context = MagicMock()
+        await handler.callback(update, context)
+        update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ignores_emoji_only(self, config):
+        from src.bot import create_app
+
+        app = create_app(config)
+        handler = app.handlers[0][0]
+
+        update = MagicMock()
+        update.message.from_user.id = 111
+        update.message.from_user.first_name = "Test"
+        update.message.text = "😀🎉"
+
+        context = MagicMock()
+        await handler.callback(update, context)
+        update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ignores_none_from_user(self, config):
+        from src.bot import create_app
+
+        app = create_app(config)
+        handler = app.handlers[0][0]
+
+        update = MagicMock()
+        update.message.from_user = None
+        update.message.text = "hello"
+
+        context = MagicMock()
+        await handler.callback(update, context)
+        update.message.reply_text.assert_not_called()
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+```bash
+uv run pytest tests/test_bot.py -v
+```
+
+Expected: FAIL (module not found)
+
+- [ ] **Step 3: Implement bot module**
+
+```python
+# src/bot.py
+from __future__ import annotations
+
+import asyncio
+
+import structlog
+from telegram import Update
+from telegram.ext import (
+    Application,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+from src.config import Config
+from src.translator import Translator
+
+log = structlog.get_logger()
+
+MAX_CONCURRENT = 3
+
+
+def create_app(config: Config) -> Application:
+    translator = Translator(
+        api_key=config.anthropic_api_key,
+        model=config.claude_model,
+    )
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+    async def handle_message(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None or message.text is None or message.from_user is None:
+            return
+
+        user_id = str(message.from_user.id)
+        sender_name = message.from_user.first_name or "Unknown"
+        text = message.text
+
+        target_lang = config.target_language(user_id)
+        if target_lang is None:
+            return
+
+        if translator.should_skip(text):
+            return
+
+        async with semaphore:
+            translation = await translator.translate(text, target_lang)
+
+        if translation is None:
+            return
+
+        translator.add_message(
+            sender=sender_name,
+            original=text,
+            translation=translation,
+        )
+
+        await message.reply_text(translation)
+        log.info(
+            "translated",
+            sender=sender_name,
+            target=target_lang,
+            original=text[:50],
+            translation=translation[:50],
+        )
+
+    app = Application.builder().token(config.telegram_token).build()
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
+    return app
+```
+
+- [ ] **Step 2: Create __main__.py entry point**
+
+```python
+# src/__main__.py
+import structlog
+from dotenv import load_dotenv
+
+from src.bot import create_app
+from src.config import load_config
+
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.dev.ConsoleRenderer(),
+    ],
+)
+
+
+def main() -> None:
+    load_dotenv()
+    config = load_config()
+
+    log = structlog.get_logger()
+    log.info("starting_bot", model=config.claude_model, users=len(config.user_map))
+
+    app = create_app(config)
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 5: Run all tests — verify they pass**
+
+```bash
+uv run pytest tests/ -v
+```
+
+Expected: All passed
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/bot.py src/__main__.py tests/test_bot.py
+git commit -m "feat: add telegram bot with message handler, entry point, and tests"
+```
+
+---
+
+### Task 5: Launchd Deployment
+
+**Files:**
+- Create: `deploy/com.koriel.telegram-translator-bot.plist`
+
+- [ ] **Step 1: Create launchd plist**
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.koriel.telegram-translator-bot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/koriel/.local/bin/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>src</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/koriel/Development/telegram-translator-bot</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/koriel/Library/Logs/telegram-translator-bot.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/koriel/Library/Logs/telegram-translator-bot.log</string>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
+```
+
+Note: Verify `uv` path on Mac mini with `which uv`. Adjust `ProgramArguments` and `WorkingDirectory` if the project is cloned to a different path on the Mac mini.
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add deploy/
+git commit -m "ops: add launchd plist for Mac mini deployment"
+```
+
+- [ ] **Step 3: Deploy instructions**
+
+On Mac mini:
+```bash
+# Copy plist
+cp deploy/com.koriel.telegram-translator-bot.plist ~/Library/LaunchAgents/
+
+# Load and start
+launchctl load ~/Library/LaunchAgents/com.koriel.telegram-translator-bot.plist
+
+# Verify
+launchctl list | grep telegram-translator
+
+# Check logs
+tail -f ~/Library/Logs/telegram-translator-bot.log
+```
+
+---
+
+### Task 6: Final Verification
+
+- [ ] **Step 1: Run full test suite**
+
+```bash
+uv run pytest tests/ -v --tb=short
+```
+
+Expected: All tests pass
+
+- [ ] **Step 2: Manual smoke test**
+
+1. Create `.env` with real credentials
+2. Run `uv run python -m src`
+3. Send a message in the Telegram group chat
+4. Verify translation appears as a reply
+
+- [ ] **Step 3: Final commit with any fixes**
+
+```bash
+git add -A
+git commit -m "chore: final polish and verification"
+```
