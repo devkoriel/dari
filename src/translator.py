@@ -41,6 +41,128 @@ LANG_LABELS = {
     "en": "🇺🇸",
 }
 
+# Instant lookup table for common phrases — no API call needed.
+# key: (normalized_text, target_lang) → translation (without flag prefix)
+PHRASE_TABLE: dict[tuple[str, str], str] = {
+    # Korean → Chinese
+    ("ㅋㅋ", "zh-TW"): "哈哈",
+    ("ㅋㅋㅋ", "zh-TW"): "哈哈哈",
+    ("ㅋㅋㅋㅋ", "zh-TW"): "哈哈哈哈",
+    ("ㅋㅋㅋㅋㅋ", "zh-TW"): "哈哈哈哈哈",
+    ("ㅠㅠ", "zh-TW"): "嗚嗚",
+    ("ㅠㅠㅠ", "zh-TW"): "嗚嗚嗚",
+    ("ㅎㅎ", "zh-TW"): "呵呵",
+    ("ㅎㅎㅎ", "zh-TW"): "呵呵呵",
+    ("ㄱㅅ", "zh-TW"): "謝啦",
+    ("ㄴㄴ", "zh-TW"): "不不",
+    ("ㅇㅇ", "zh-TW"): "嗯嗯",
+    ("ㅇㅋ", "zh-TW"): "好",
+    ("ㄷㄷ", "zh-TW"): "抖抖",
+    ("고마워", "zh-TW"): "謝啦",
+    ("고마워!", "zh-TW"): "謝啦！",
+    ("고마워요", "zh-TW"): "謝謝",
+    ("사랑해", "zh-TW"): "我愛你",
+    ("사랑해!", "zh-TW"): "我愛你！",
+    ("보고싶어", "zh-TW"): "想你了",
+    ("보고싶다", "zh-TW"): "想你了",
+    ("보고싶어!", "zh-TW"): "想你了！",
+    ("보고싶네", "zh-TW"): "想你了呢",
+    ("뭐해", "zh-TW"): "你在幹嘛",
+    ("뭐해?", "zh-TW"): "你在幹嘛？",
+    ("밥 먹었어?", "zh-TW"): "吃飯了嗎？",
+    ("밥먹었어?", "zh-TW"): "吃飯了嗎？",
+    ("잘자", "zh-TW"): "晚安",
+    ("잘자!", "zh-TW"): "晚安！",
+    ("좋아", "zh-TW"): "好",
+    ("좋아!", "zh-TW"): "好！",
+    ("알겠어", "zh-TW"): "知道了",
+    ("응", "zh-TW"): "嗯",
+    ("응응", "zh-TW"): "嗯嗯",
+    ("아니", "zh-TW"): "不是",
+    ("진짜?", "zh-TW"): "真的嗎？",
+    ("진짜", "zh-TW"): "真的",
+    ("대박", "zh-TW"): "太厲害了",
+    ("대박!", "zh-TW"): "太厲害了！",
+    ("아하", "zh-TW"): "啊哈",
+    ("ㅇㅈ", "zh-TW"): "認同",
+    ("ㅁㅊ", "zh-TW"): "瘋了",
+    ("귀여워", "zh-TW"): "好可愛",
+    ("귀여워!", "zh-TW"): "好可愛！",
+    ("화이팅", "zh-TW"): "加油",
+    ("화이팅!", "zh-TW"): "加油！",
+    ("아이고", "zh-TW"): "唉呀",
+    ("헐", "zh-TW"): "天啊",
+    # Korean → English
+    ("ㅋㅋ", "en"): "haha",
+    ("ㅋㅋㅋ", "en"): "hahaha",
+    ("ㅠㅠ", "en"): "T_T",
+    ("고마워", "en"): "thanks",
+    ("사랑해", "en"): "I love you",
+    # Chinese → Korean
+    ("哈哈", "ko"): "ㅋㅋ",
+    ("哈哈哈", "ko"): "ㅋㅋㅋ",
+    ("哈哈哈哈", "ko"): "ㅋㅋㅋㅋ",
+    ("嗚嗚", "ko"): "ㅠㅠ",
+    ("嗚嗚嗚", "ko"): "ㅠㅠㅠ",
+    ("呵呵", "ko"): "ㅎㅎ",
+    ("謝謝", "ko"): "고마워",
+    ("謝謝!", "ko"): "고마워!",
+    ("謝謝！", "ko"): "고마워!",
+    ("謝啦", "ko"): "고마워",
+    ("我愛你", "ko"): "사랑해",
+    ("想你了", "ko"): "보고싶어",
+    ("想你", "ko"): "보고싶어",
+    ("你在幹嘛", "ko"): "뭐해",
+    ("你在幹嘛？", "ko"): "뭐해?",
+    ("在幹嘛", "ko"): "뭐해",
+    ("吃飯了嗎", "ko"): "밥 먹었어?",
+    ("吃飯了嗎？", "ko"): "밥 먹었어?",
+    ("晚安", "ko"): "잘자",
+    ("晚安!", "ko"): "잘자!",
+    ("晚安！", "ko"): "잘자!",
+    ("好", "ko"): "좋아",
+    ("好!", "ko"): "좋아!",
+    ("好！", "ko"): "좋아!",
+    ("好的", "ko"): "알겠어",
+    ("知道了", "ko"): "알겠어",
+    ("嗯", "ko"): "응",
+    ("嗯嗯", "ko"): "응응",
+    ("不是", "ko"): "아니",
+    ("真的嗎", "ko"): "진짜?",
+    ("真的嗎？", "ko"): "진짜?",
+    ("真的", "ko"): "진짜",
+    ("太厲害了", "ko"): "대박",
+    ("好可愛", "ko"): "귀여워",
+    ("好可愛!", "ko"): "귀여워!",
+    ("好可愛！", "ko"): "귀여워!",
+    ("加油", "ko"): "화이팅",
+    ("加油!", "ko"): "화이팅!",
+    ("加油！", "ko"): "화이팅!",
+    ("天啊", "ko"): "헐",
+    ("哦", "ko"): "아",
+    ("喔", "ko"): "아",
+    ("啊哈", "ko"): "아하",
+    # Chinese → English
+    ("哈哈", "en"): "haha",
+    ("哈哈哈", "en"): "hahaha",
+    ("謝謝", "en"): "thanks",
+    ("我愛你", "en"): "I love you",
+    # English → Korean
+    ("ok", "ko"): "ㅇㅋ",
+    ("okay", "ko"): "ㅇㅋ",
+    ("lol", "ko"): "ㅋㅋ",
+    ("haha", "ko"): "ㅋㅋ",
+    ("thanks", "ko"): "고마워",
+    ("thank you", "ko"): "고마워",
+    # English → Chinese
+    ("ok", "zh-TW"): "好",
+    ("okay", "zh-TW"): "好",
+    ("lol", "zh-TW"): "哈哈",
+    ("haha", "zh-TW"): "哈哈",
+    ("thanks", "zh-TW"): "謝啦",
+    ("thank you", "zh-TW"): "謝謝",
+}
+
 
 def _has_translatable_text(text: str) -> bool:
     for ch in text:
@@ -84,7 +206,10 @@ class Translator:
         self._model = model
         self._max_context = max_context
         self._buffers: OrderedDict[int, deque[ContextEntry]] = OrderedDict()
-        self.stats: dict[str, int] = {"messages": 0, "api_calls": 0, "errors": 0, "skipped_same_lang": 0}
+        self.stats: dict[str, int] = {
+            "messages": 0, "api_calls": 0, "errors": 0,
+            "skipped_same_lang": 0, "phrase_hits": 0, "cache_reads": 0,
+        }
 
     def _get_buffer(self, chat_id: int) -> deque[ContextEntry]:
         if chat_id in self._buffers:
@@ -113,6 +238,20 @@ class Translator:
         if target_lang == "zh-TW":
             return source == "zh-TW"
         return source == target_lang
+
+    def lookup_phrase(self, text: str, target_lang: str) -> str | None:
+        """Try instant lookup for common phrases. Returns full flagged translation or None."""
+        normalized = text.strip()
+        result = PHRASE_TABLE.get((normalized, target_lang))
+        if result is None:
+            # Try lowercase for English
+            result = PHRASE_TABLE.get((normalized.lower(), target_lang))
+        if result is not None:
+            self.stats["phrase_hits"] += 1
+            source_lang = detect_source_language(text)
+            label = LANG_LABELS.get(source_lang, "")
+            return f"{label} {result}" if label else result
+        return None
 
     def should_skip(self, text: str) -> bool:
         stripped = text.strip()
@@ -168,8 +307,6 @@ class Translator:
         if not text:
             return text
 
-        # If response has multiple lines, Claude may have leaked reasoning.
-        # Common patterns: "Wait, I need to...", "Let me translate...", "Translation:"
         leak_markers = (
             "wait,", "let me", "i need to", "i should", "translation:", "here is",
             "the translation", "translating", "note:", "sorry",
@@ -177,8 +314,6 @@ class Translator:
 
         lines = text.split("\n")
         if len(lines) > 1:
-            # Try to find the actual translation — usually the last non-empty line
-            # that doesn't look like meta-text
             candidates = []
             for line in lines:
                 stripped = line.strip()
@@ -192,17 +327,13 @@ class Translator:
                 candidates.append(stripped)
 
             if candidates:
-                # Prefer the last candidate (Claude usually puts the real answer last)
                 text = candidates[-1]
             else:
-                # Fallback: just take the first line
                 text = lines[0].strip()
 
-        # Strip leading meta-text on a single line
         lower = text.lower()
         for marker in leak_markers:
             if lower.startswith(marker):
-                # Likely not a translation at all, but try to salvage
                 log.warning("leaked_reasoning_detected", raw=raw[:200])
                 break
 
@@ -211,19 +342,39 @@ class Translator:
     async def translate(
         self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
     ) -> str | None:
+        # Try instant phrase lookup first
+        quick = self.lookup_phrase(text, target_lang)
+        if quick is not None:
+            return quick
+
         self.stats["api_calls"] += 1
         messages = self._build_messages(chat_id, text, target_lang, sender_name)
 
-        # Scale max_tokens to input length — short messages need short translations
+        # Scale max_tokens to input length
         max_tokens = min(256, max(64, len(text) * 4))
+
+        # Use prompt caching for the system prompt
+        cached_system = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
         try:
             response = await self._client.messages.create(
                 model=self._model,
                 max_tokens=max_tokens,
-                system=SYSTEM_PROMPT,
+                system=cached_system,
                 messages=messages,
             )
+
+            # Track cache usage
+            usage = response.usage
+            if hasattr(usage, "cache_read_input_tokens") and usage.cache_read_input_tokens:
+                self.stats["cache_reads"] += 1
+
             if not response.content:
                 log.warning("empty_api_response", chat_id=chat_id)
                 return None

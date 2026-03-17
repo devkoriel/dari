@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.translator import Translator, MAX_INPUT_LENGTH, MAX_CHATS
+from src.translator import Translator, MAX_INPUT_LENGTH, MAX_CHATS, PHRASE_TABLE
 
 CHAT_ID = 12345
 
@@ -131,16 +131,57 @@ class TestShouldSkip:
         assert t.should_skip("...") is True
 
 
+class TestPhraseLookup:
+    def test_korean_to_chinese(self):
+        t = Translator(api_key="test", model="test-model")
+        result = t.lookup_phrase("ㅋㅋㅋ", "zh-TW")
+        assert result == "🇰🇷 哈哈哈"
+        assert t.stats["phrase_hits"] == 1
+
+    def test_chinese_to_korean(self):
+        t = Translator(api_key="test", model="test-model")
+        result = t.lookup_phrase("哈哈哈", "ko")
+        assert result == "🇹🇼 ㅋㅋㅋ"
+
+    def test_english_case_insensitive(self):
+        t = Translator(api_key="test", model="test-model")
+        result = t.lookup_phrase("OK", "ko")
+        assert result == "🇺🇸 ㅇㅋ"
+
+    def test_strips_whitespace(self):
+        t = Translator(api_key="test", model="test-model")
+        result = t.lookup_phrase("  고마워  ", "zh-TW")
+        assert result == "🇰🇷 謝啦"
+
+    def test_miss_returns_none(self):
+        t = Translator(api_key="test", model="test-model")
+        result = t.lookup_phrase("이것은 긴 문장입니다", "zh-TW")
+        assert result is None
+        assert t.stats["phrase_hits"] == 0
+
+    @pytest.mark.asyncio
+    async def test_translate_uses_phrase_table(self):
+        """translate() should return phrase table result without API call."""
+        t = Translator(api_key="test", model="test-model")
+        result = await t.translate(CHAT_ID, "사랑해", "zh-TW")
+        assert result == "🇰🇷 我愛你"
+        assert t.stats["phrase_hits"] == 1
+        assert t.stats["api_calls"] == 0
+
+
 class TestTranslate:
+    def _mock_response(self, text, cache_read_tokens=0):
+        mock = MagicMock()
+        mock.content = [MagicMock(text=text)]
+        mock.usage.cache_read_input_tokens = cache_read_tokens
+        return mock
+
     @pytest.mark.asyncio
     async def test_translate_calls_api(self):
         t = Translator(api_key="test", model="test-model")
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="你好世界")]
-
         with patch.object(t._client, "messages") as mock_messages:
-            mock_messages.create = AsyncMock(return_value=mock_response)
+            mock_messages.create = AsyncMock(return_value=self._mock_response("你好世界"))
             result = await t.translate(CHAT_ID, "hello world", "zh-TW")
 
         assert result == "🇺🇸 你好世界"
@@ -148,6 +189,10 @@ class TestTranslate:
         call_kwargs = mock_messages.create.call_args.kwargs
         assert call_kwargs["model"] == "test-model"
         assert call_kwargs["max_tokens"] <= 256
+        # Verify cached system prompt format
+        system = call_kwargs["system"]
+        assert isinstance(system, list)
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
 
     @pytest.mark.asyncio
     async def test_translate_returns_none_on_api_error(self):
@@ -163,6 +208,7 @@ class TestTranslate:
         t = Translator(api_key="test", model="test-model")
         mock_response = MagicMock()
         mock_response.content = []
+        mock_response.usage.cache_read_input_tokens = 0
 
         with patch.object(t._client, "messages") as mock_messages:
             mock_messages.create = AsyncMock(return_value=mock_response)
@@ -173,15 +219,22 @@ class TestTranslate:
     async def test_translate_tracks_api_calls(self):
         t = Translator(api_key="test", model="test-model")
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="你好")]
-
         with patch.object(t._client, "messages") as mock_messages:
-            mock_messages.create = AsyncMock(return_value=mock_response)
+            mock_messages.create = AsyncMock(return_value=self._mock_response("你好"))
             await t.translate(CHAT_ID, "hello", "zh-TW")
             await t.translate(CHAT_ID, "world", "zh-TW")
 
         assert t.stats["api_calls"] == 2
+
+    @pytest.mark.asyncio
+    async def test_translate_tracks_cache_reads(self):
+        t = Translator(api_key="test", model="test-model")
+
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(return_value=self._mock_response("你好", cache_read_tokens=150))
+            await t.translate(CHAT_ID, "hello", "zh-TW")
+
+        assert t.stats["cache_reads"] == 1
 
 
 class TestCleanResponse:
@@ -233,3 +286,5 @@ class TestStats:
         assert t.stats["api_calls"] == 0
         assert t.stats["errors"] == 0
         assert t.stats["skipped_same_lang"] == 0
+        assert t.stats["phrase_hits"] == 0
+        assert t.stats["cache_reads"] == 0

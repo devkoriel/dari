@@ -178,6 +178,8 @@ def create_app(config: Config) -> Application:
             f"Uptime: {uptime_str}",
             f"Translated: {stats['messages']}",
             f"API calls: {stats['api_calls']}",
+            f"Phrase hits: {stats['phrase_hits']}",
+            f"Cache reads: {stats['cache_reads']}",
             f"Errors: {stats['errors']}",
             f"Skipped (same lang): {stats['skipped_same_lang']}",
             f"Active chats: {len(translator._buffers)}",
