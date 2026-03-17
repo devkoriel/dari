@@ -12,6 +12,7 @@ log = structlog.get_logger()
 LANGUAGE_NAMES = {
     "ko": "Korean (한국어)",
     "zh-TW": "Traditional Chinese (繁體中文)",
+    "en": "English",
 }
 
 SYSTEM_PROMPT = """You are a translator in a group chat between a Korean speaker and a Traditional Chinese (繁體中文) speaker.
@@ -26,6 +27,12 @@ Rules:
 MAX_INPUT_LENGTH = 2000
 MAX_CHATS = 100
 
+LANG_LABELS = {
+    "ko": "🇰🇷",
+    "zh-TW": "🇹🇼",
+    "en": "🇺🇸",
+}
+
 
 def _has_translatable_text(text: str) -> bool:
     for ch in text:
@@ -33,6 +40,16 @@ def _has_translatable_text(text: str) -> bool:
         if cat.startswith("L"):
             return True
     return False
+
+
+def detect_source_language(text: str) -> str:
+    for ch in text:
+        cp = ord(ch)
+        if 0xAC00 <= cp <= 0xD7AF or 0x3130 <= cp <= 0x318F:
+            return "ko"
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+            return "zh-TW"
+    return "en"
 
 
 @dataclass
@@ -118,7 +135,10 @@ class Translator:
             if not response.content:
                 log.warning("empty_api_response", chat_id=chat_id)
                 return None
-            return response.content[0].text.strip()
+            translation = response.content[0].text.strip()
+            source_lang = detect_source_language(text)
+            label = LANG_LABELS.get(source_lang, "")
+            return f"{label} {translation}" if label else translation
         except Exception:
             log.exception("translation_failed", target_lang=target_lang)
             return None

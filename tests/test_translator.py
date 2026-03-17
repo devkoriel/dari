@@ -112,7 +112,7 @@ class TestTranslate:
             mock_messages.create = AsyncMock(return_value=mock_response)
             result = await t.translate(CHAT_ID, "hello world", "zh-TW")
 
-        assert result == "你好世界"
+        assert result == "🇺🇸 你好世界"
         mock_messages.create.assert_called_once()
         call_kwargs = mock_messages.create.call_args.kwargs
         assert call_kwargs["model"] == "test-model"

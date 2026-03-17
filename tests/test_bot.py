@@ -42,8 +42,8 @@ def _make_caption_update(user_id: int, caption: str, chat_id: int = 12345, first
 class TestHandleMessage:
     def _get_message_handler(self, config):
         app = create_app(config)
-        # ChatMemberHandler is index 0, MessageHandler is index 1
-        return app.handlers[0][1]
+        # Handlers: [0]=ChatMemberHandler, [1]=CommandHandler(/lang), [2]=MessageHandler(text), [3]=MessageHandler(voice)
+        return app.handlers[0][2]
 
     @pytest.mark.asyncio
     async def test_ignores_unknown_user(self, config):
@@ -73,23 +73,20 @@ class TestHandleMessage:
         handler = self._get_message_handler(config)
         update = _make_text_update(user_id=111, text="안녕하세요", first_name="Koriel")
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="你好")]
-
-        with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="你好"):
+        with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="🇰🇷 你好"):
             await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_called_once_with("你好")
+        update.message.reply_text.assert_called_once_with("🇰🇷 你好")
 
     @pytest.mark.asyncio
     async def test_translates_photo_caption(self, config):
         handler = self._get_message_handler(config)
         update = _make_caption_update(user_id=222, caption="好漂亮", first_name="GF")
 
-        with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="예쁘다"):
+        with patch("src.bot.Translator.translate", new_callable=AsyncMock, return_value="🇹🇼 예쁘다"):
             await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_called_once_with("예쁘다")
+        update.message.reply_text.assert_called_once_with("🇹🇼 예쁘다")
 
     @pytest.mark.asyncio
     async def test_no_reply_when_translation_none(self, config):
@@ -105,7 +102,7 @@ class TestHandleMessage:
 class TestAdminGate:
     def _get_member_handler(self, config):
         app = create_app(config)
-        return app.handlers[0][0]
+        return app.handlers[0][0]  # ChatMemberHandler is always first
 
     @pytest.mark.asyncio
     async def test_leaves_chat_if_non_admin_invites(self, config):
