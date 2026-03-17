@@ -147,7 +147,7 @@ class TestTranslate:
         mock_messages.create.assert_called_once()
         call_kwargs = mock_messages.create.call_args.kwargs
         assert call_kwargs["model"] == "test-model"
-        assert call_kwargs["max_tokens"] == 1024
+        assert call_kwargs["max_tokens"] <= 256
 
     @pytest.mark.asyncio
     async def test_translate_returns_none_on_api_error(self):
@@ -182,6 +182,48 @@ class TestTranslate:
             await t.translate(CHAT_ID, "world", "zh-TW")
 
         assert t.stats["api_calls"] == 2
+
+
+class TestCleanResponse:
+    def test_clean_simple(self):
+        assert Translator._clean_response("你好") == "你好"
+
+    def test_clean_strips_whitespace(self):
+        assert Translator._clean_response("  你好  ") == "你好"
+
+    def test_clean_leaked_reasoning_multiline(self):
+        raw = (
+            "Wait, I need to translate the message you provided:\n\n"
+            "ㅋㅋㅋ 보고싶네\n\n"
+            "哈哈哈 我想你了"
+        )
+        assert Translator._clean_response(raw) == "哈哈哈 我想你了"
+
+    def test_clean_leaked_let_me(self):
+        raw = "Let me translate this:\n\n想你了"
+        assert Translator._clean_response(raw) == "想你了"
+
+    def test_clean_single_line_preserved(self):
+        assert Translator._clean_response("보고싶어") == "보고싶어"
+
+    def test_clean_empty(self):
+        assert Translator._clean_response("") == ""
+
+    def test_clean_translation_prefix(self):
+        raw = "Translation: 想你了"
+        # Single line starting with "translation:" — still returned as-is
+        # (the marker detection logs a warning but doesn't alter)
+        result = Translator._clean_response(raw)
+        assert result == "Translation: 想你了"
+
+    def test_clean_multiline_with_meta_and_original(self):
+        raw = (
+            "Here is the translation:\n"
+            "ㅋㅋㅋ 보고싶네\n"
+            "哈哈哈 我想你了"
+        )
+        # Should skip "Here is..." and the original Korean, take the Chinese
+        assert Translator._clean_response(raw) == "哈哈哈 我想你了"
 
 
 class TestStats:
