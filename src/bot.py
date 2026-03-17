@@ -38,17 +38,37 @@ LANG_SHORTCUTS = {
 }
 
 SAY_SYSTEM = """You are a language tutor for a Korean-Chinese couple.
-Given a word or phrase, explain how to say it in the target language.
-Format:
-- Translation
-- Romanization/pronunciation
-- Example sentence in both languages
-Keep it short and practical. Use Traditional Chinese (繁體中文) only."""
+Given a word/phrase, show how to say it in the target language.
+
+Output format (plain text, NO markdown, NO headers, NO bold):
+Translation: [translation]
+Pronunciation: [romanization]
+Example: [one short example sentence]
+
+Keep it to 3-4 lines max. Traditional Chinese (繁體中文) only. Korean in 반말."""
 
 TEACH_SYSTEM = """You are a cultural language guide for a Korean-Chinese couple.
-Explain the given word/concept — its literal meaning, cultural context, when it's used, and the closest equivalent in the other language.
-Give 1-2 example sentences. Keep it concise and fun.
-Use Traditional Chinese (繁體中文) only. Korean in 반말."""
+Explain the given word/concept briefly.
+
+Output format (plain text, NO markdown, NO headers, NO bold, NO ---):
+[word] = [one-line meaning]
+Korean: [Korean explanation, 1 line]
+Chinese: [Chinese explanation, 1 line]
+Example: [1 example sentence in both languages]
+
+Keep it to 4-6 lines max. Be concise and fun. Traditional Chinese (繁體中文) only. Korean in 반말."""
+
+HELP_TEXT = """🤖 Trans Bot Commands
+
+/lang ko|en|zh|reset — Change translation target
+/learn on|off — Show original → translation
+/say <phrase> — How to say it in the other language
+/teach <word> — Cultural explanation of a word
+/dday — Show D-day counter
+/dday set YYYY-MM-DD <label> — Add a date
+/dday del <label> — Remove a date
+/stats — Bot statistics (admin only)
+/help — This message"""
 
 
 def create_app(config: Config) -> Application:
@@ -86,6 +106,16 @@ def create_app(config: Config) -> Application:
             return
 
         log.info("joined_chat", chat_id=chat_id, invited_by=inviter_id)
+
+    # --- /help command ---
+
+    async def handle_help(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None:
+            return
+        await message.reply_text(HELP_TEXT)
 
     # --- /lang command ---
 
@@ -230,7 +260,7 @@ def create_app(config: Config) -> Application:
         user_msg = f"How do you say '{phrase}' in {target}?"
 
         async with semaphore:
-            result = await translator.ask_claude(SAY_SYSTEM, user_msg, max_tokens=300)
+            result = await translator.ask_claude(SAY_SYSTEM, user_msg, max_tokens=150)
 
         if result:
             await message.reply_text(f"📝 {result}")
@@ -266,7 +296,7 @@ def create_app(config: Config) -> Application:
         user_msg = f"Explain the word/concept: {word}\n{lang_hint}"
 
         async with semaphore:
-            result = await translator.ask_claude(TEACH_SYSTEM, user_msg, max_tokens=400)
+            result = await translator.ask_claude(TEACH_SYSTEM, user_msg, max_tokens=200)
 
         if result:
             await message.reply_text(f"🎓 {result}")
@@ -323,7 +353,7 @@ def create_app(config: Config) -> Application:
             dates["Anniversary"] = config.anniversary_date
 
         if not dates:
-            await message.reply_text("No dates set.\nUsage: /dday set YYYY-MM-DD [label]")
+            await message.reply_text("No dates set.\n/dday set YYYY-MM-DD [label]\n/dday del <label>")
             return
 
         lines = ["💕 D-Day Counter"]
@@ -488,6 +518,7 @@ def create_app(config: Config) -> Application:
 
     app = Application.builder().token(config.telegram_token).build()
     app.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(CommandHandler("help", handle_help))
     app.add_handler(CommandHandler("lang", handle_lang))
     app.add_handler(CommandHandler("stats", handle_stats))
     app.add_handler(CommandHandler("learn", handle_learn))

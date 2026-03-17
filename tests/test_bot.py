@@ -267,20 +267,28 @@ class TestTeachCommand:
 
 
 class TestDDay:
-    def _get_handler(self, config):
-        app = create_app(config)
+    def _get_handler(self, config, tmp_path):
+        cfg = Config(
+            telegram_token=config.telegram_token,
+            anthropic_api_key=config.anthropic_api_key,
+            admin_user_id=config.admin_user_id,
+            user_map=config.user_map,
+            claude_model=config.claude_model,
+            data_dir=str(tmp_path),
+        )
+        app = create_app(cfg)
         return _find_handler(app, command="dday")
 
     @pytest.mark.asyncio
-    async def test_dday_no_dates(self, config):
-        handler = self._get_handler(config)
+    async def test_dday_no_dates(self, config, tmp_path):
+        handler = self._get_handler(config, tmp_path)
         update, context = _make_command_update(user_id=111, args=[])
         await handler.callback(update, context)
         assert "No dates" in update.message.reply_text.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_dday_set(self, config):
-        handler = self._get_handler(config)
+    async def test_dday_set(self, config, tmp_path):
+        handler = self._get_handler(config, tmp_path)
         update, context = _make_command_update(user_id=111, args=["set", "2024-06-15", "Anniversary"])
         await handler.callback(update, context)
         reply = update.message.reply_text.call_args[0][0]
@@ -288,8 +296,8 @@ class TestDDay:
         assert "D+" in reply
 
     @pytest.mark.asyncio
-    async def test_dday_invalid_date(self, config):
-        handler = self._get_handler(config)
+    async def test_dday_invalid_date(self, config, tmp_path):
+        handler = self._get_handler(config, tmp_path)
         update, context = _make_command_update(user_id=111, args=["set", "not-a-date"])
         await handler.callback(update, context)
         assert "Invalid" in update.message.reply_text.call_args[0][0]
