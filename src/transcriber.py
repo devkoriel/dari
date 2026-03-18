@@ -26,7 +26,7 @@ class Transcriber:
                 response = await client.post(
                     GROQ_WHISPER_URL,
                     headers={"Authorization": f"Bearer {self._api_key}"},
-                    files={"file": (filename, audio_bytes, "audio/ogg")},
+                    files={"file": (filename, audio_bytes, "application/octet-stream")},
                     data={"model": "whisper-large-v3-turbo", "response_format": "text"},
                 )
                 response.raise_for_status()

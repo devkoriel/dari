@@ -534,20 +534,29 @@ def create_app(config: Config) -> Application:
 
     async def _transcribe_and_reply(
         update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
         file_id: str,
         user_id: str,
         icon: str,
         filename: str = "voice.ogg",
     ) -> None:
+        nonlocal consecutive_errors, error_notified
+
         message = update.message
-        if message is None:
+        if message is None or message.from_user is None:
             return
 
         target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
         if target_lang is None:
             return
 
-        file = await update.get_bot().get_file(file_id)
+        file = await context.bot.get_file(file_id)
+
+        # Skip files larger than 20MB to avoid memory/API issues
+        if file.file_size and file.file_size > 20 * 1024 * 1024:
+            log.warning("media_too_large", size=file.file_size)
+            return
+
         audio_bytes = await file.download_as_bytearray()
 
         async with semaphore:
@@ -569,26 +578,39 @@ def create_app(config: Config) -> Application:
 
         translator.stats["messages"] += 1
 
+        # Track per-user stats
+        us = store.get("user_stats", user_id) or {"name": sender_name, "count": 0}
+        us["name"] = sender_name
+        us["count"] = us.get("count", 0) + 1
+        store.set("user_stats", user_id, us)
+
         async with semaphore:
             translation = await translator.translate(chat_id, text, target_lang, sender_name)
 
-        if translation:
-            translator.add_message(
-                chat_id=chat_id,
-                sender=sender_name,
-                original=text,
-                translation=translation,
-            )
-            await message.reply_text(
-                f"{icon} {text}\n→ {translation}",
-                reply_to_message_id=message.message_id,
-            )
-            log.info("media_translated", sender=sender_name, chat_id=chat_id, type=icon)
-        else:
+        if translation is None:
+            consecutive_errors += 1
+            if consecutive_errors >= ERROR_NOTIFY_THRESHOLD:
+                await _notify_admin_on_errors(context)
             await message.reply_text(
                 f"{icon} {text}",
                 reply_to_message_id=message.message_id,
             )
+            return
+
+        consecutive_errors = 0
+        error_notified = False
+
+        translator.add_message(
+            chat_id=chat_id,
+            sender=sender_name,
+            original=text,
+            translation=translation,
+        )
+        await message.reply_text(
+            f"{icon} {text}\n→ {translation}",
+            reply_to_message_id=message.message_id,
+        )
+        log.info("media_translated", sender=sender_name, chat_id=chat_id, type=icon)
 
     async def handle_voice(
         update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -605,7 +627,7 @@ def create_app(config: Config) -> Application:
         if voice is None:
             return
 
-        await _transcribe_and_reply(update, voice.file_id, user_id, "🎤")
+        await _transcribe_and_reply(update, context, voice.file_id, user_id, "🎤")
 
     async def handle_video(
         update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -622,14 +644,14 @@ def create_app(config: Config) -> Application:
         video_note = message.video_note
         if video_note is not None:
             await _transcribe_and_reply(
-                update, video_note.file_id, user_id, "🎥", filename="video.mp4"
+                update, context, video_note.file_id, user_id, "🎥", filename="video.mp4"
             )
             return
 
         video = message.video
         if video is not None:
             await _transcribe_and_reply(
-                update, video.file_id, user_id, "🎬", filename="video.mp4"
+                update, context, video.file_id, user_id, "🎬", filename="video.mp4"
             )
 
     # --- Photo handler (image translation) ---
@@ -670,12 +692,12 @@ def create_app(config: Config) -> Application:
             try:
                 await context.bot.send_message(chat_id=int(uid), text=text)
             except Exception:
-                log.exception("daily_quote_send_failed", user_id=uid)
+                log.warning("daily_quote_send_failed", user_id=uid)
 
     # --- Error handler ---
 
     async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        log.exception("unhandled_error", error=str(context.error))
+        log.error("unhandled_error", error=str(context.error), exc_info=context.error)
 
     # --- Build app ---
 
