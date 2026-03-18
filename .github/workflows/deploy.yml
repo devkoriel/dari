@@ -1,15 +1,14 @@
-name: Deploy
+name: CI/CD
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "*.md"
-      - "docs/**"
+  pull_request:
+    branches: [main]
 
 jobs:
-  test:
-    name: Test
+  lint:
+    name: Lint
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -17,17 +16,40 @@ jobs:
       - name: Install dependencies
         run: |
           export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-          uv sync
+          uv sync --extra dev
+
+      - name: Ruff check
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          uv run ruff check src/ tests/
+
+      - name: Ruff format
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          uv run ruff format --check src/ tests/
+
+  test:
+    name: Test
+    runs-on: self-hosted
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          uv sync --extra dev
 
       - name: Run tests
         run: |
           export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-          uv run python -m pytest tests/ -v
+          uv run python -m pytest tests/ -v --tb=short
 
   deploy:
     name: Deploy
-    needs: test
+    needs: [lint, test]
     runs-on: self-hosted
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Pull latest code
         run: |
@@ -47,5 +69,11 @@ jobs:
       - name: Verify bot started
         run: |
           sleep 3
-          launchctl list | grep "com.koriel.dari"
-          tail -3 ~/Library/Logs/dari.log
+          STATUS=$(launchctl list | grep "com.koriel.dari" | awk '{print $2}')
+          if [ "$STATUS" != "0" ]; then
+            echo "Bot failed to start (exit code: $STATUS)"
+            tail -20 ~/Library/Logs/dari.log
+            exit 1
+          fi
+          echo "Bot is running"
+          tail -5 ~/Library/Logs/dari.log

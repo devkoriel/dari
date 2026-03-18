@@ -1,9 +1,8 @@
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.translator import Translator, MAX_INPUT_LENGTH, MAX_CHATS, PHRASE_TABLE
+from src.translator import MAX_CHATS, MAX_INPUT_LENGTH, Translator
 
 CHAT_ID = 12345
 
@@ -77,7 +76,12 @@ class TestContextScaling:
         assert Translator._context_size_for_text("오늘 뭐 먹었어?") == 8
 
     def test_long_message_gets_full_context(self):
-        assert Translator._context_size_for_text("This is a much longer message that needs full context to translate properly") == 20
+        assert (
+            Translator._context_size_for_text(
+                "This is a much longer message that needs full context to translate properly"
+            )
+            == 20
+        )
 
     def test_short_message_limits_context_entries(self):
         t = Translator(api_key="test", model="test-model")
@@ -296,11 +300,7 @@ class TestCleanResponse:
         assert Translator._clean_response("  你好  ") == "你好"
 
     def test_clean_leaked_reasoning_multiline(self):
-        raw = (
-            "Wait, I need to translate the message you provided:\n\n"
-            "ㅋㅋㅋ 보고싶네\n\n"
-            "哈哈哈 我想你了"
-        )
+        raw = "Wait, I need to translate the message you provided:\n\nㅋㅋㅋ 보고싶네\n\n哈哈哈 我想你了"
         # Strips leaked "Wait," line, keeps the actual content
         assert Translator._clean_response(raw) == "ㅋㅋㅋ 보고싶네\n\n哈哈哈 我想你了"
 
@@ -320,11 +320,7 @@ class TestCleanResponse:
         assert result == "想你了"
 
     def test_clean_multiline_with_meta_and_original(self):
-        raw = (
-            "Here is the translation:\n"
-            "ㅋㅋㅋ 보고싶네\n"
-            "哈哈哈 我想你了"
-        )
+        raw = "Here is the translation:\nㅋㅋㅋ 보고싶네\n哈哈哈 我想你了"
         # Strips "Here is..." leaked prefix, keeps all translation lines
         assert Translator._clean_response(raw) == "ㅋㅋㅋ 보고싶네\n哈哈哈 我想你了"
 

@@ -35,23 +35,20 @@ class TestLoadConfig:
     def test_missing_token_raises(self):
         env = _env()
         del env["TELEGRAM_BOT_TOKEN"]
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
-                load_config()
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
+            load_config()
 
     def test_missing_api_key_raises(self):
         env = _env()
         del env["ANTHROPIC_API_KEY"]
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-                load_config()
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+            load_config()
 
     def test_missing_admin_user_id_raises(self):
         env = _env()
         del env["ADMIN_USER_ID"]
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="ADMIN_USER_ID"):
-                load_config()
+        with patch.dict(os.environ, env, clear=True), pytest.raises(ValueError, match="ADMIN_USER_ID"):
+            load_config()
 
     def test_invalid_user_map_raises(self):
         with patch.dict(os.environ, _env(USER_MAP="not-json"), clear=True):

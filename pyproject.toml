@@ -15,8 +15,37 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=1.0",
+    "ruff>=0.11.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "S",     # flake8-bandit (security)
+    "UP",    # pyupgrade
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific
+]
+ignore = [
+    "S101",   # assert in tests is fine
+    "S104",   # binding to all interfaces
+    "S311",   # random not for crypto
+    "E501",   # line length handled by formatter
+    "RUF001", # fullwidth CJK punctuation is intentional
+    "RUF003", # fullwidth CJK punctuation in comments
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "SIM102", "SIM117"]

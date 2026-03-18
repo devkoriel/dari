@@ -246,8 +246,12 @@ class Translator:
         self._max_context = max_context
         self._buffers: OrderedDict[int, deque[ContextEntry]] = OrderedDict()
         self.stats: dict[str, int] = {
-            "messages": 0, "api_calls": 0, "errors": 0,
-            "skipped_same_lang": 0, "phrase_hits": 0, "cache_reads": 0,
+            "messages": 0,
+            "api_calls": 0,
+            "errors": 0,
+            "skipped_same_lang": 0,
+            "phrase_hits": 0,
+            "cache_reads": 0,
         }
 
     def _get_buffer(self, chat_id: int) -> deque[ContextEntry]:
@@ -259,12 +263,8 @@ class Translator:
             self._buffers[chat_id] = deque(maxlen=self._max_context)
         return self._buffers[chat_id]
 
-    def add_message(
-        self, chat_id: int, sender: str, original: str, translation: str
-    ) -> None:
-        self._get_buffer(chat_id).append(
-            ContextEntry(sender=sender, original=original, translation=translation)
-        )
+    def add_message(self, chat_id: int, sender: str, original: str, translation: str) -> None:
+        self._get_buffer(chat_id).append(ContextEntry(sender=sender, original=original, translation=translation))
 
     def get_context(self, chat_id: int) -> list[dict]:
         return [
@@ -334,9 +334,7 @@ class Translator:
         hours = int(minutes / 60)
         return f"{hours}h ago"
 
-    def _build_messages(
-        self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
-    ) -> list[dict[str, str]]:
+    def _build_messages(self, chat_id: int, text: str, target_lang: str, sender_name: str = "") -> list[dict[str, str]]:
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         now = time.monotonic()
 
@@ -348,9 +346,7 @@ class Translator:
         context_lines = []
         for entry in recent:
             age = self._format_age(now - entry.timestamp)
-            context_lines.append(
-                f"[{age}] {entry.sender}: {entry.original} → {entry.translation}"
-            )
+            context_lines.append(f"[{age}] {entry.sender}: {entry.original} → {entry.translation}")
 
         context_block = "\n".join(context_lines) if context_lines else "(no prior messages)"
 
@@ -361,9 +357,7 @@ class Translator:
         )
         return [{"role": "user", "content": user_content}]
 
-    async def translate_image(
-        self, image_bytes: bytes, media_type: str, target_lang: str
-    ) -> str | None:
+    async def translate_image(self, image_bytes: bytes, media_type: str, target_lang: str) -> str | None:
         self.stats["api_calls"] += 1
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         b64_data = base64.b64encode(image_bytes).decode()
@@ -373,27 +367,29 @@ class Translator:
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=512,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": b64_data,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": b64_data,
+                                    },
                                 },
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
-                                    "Format:\n📷 [original text]\n→ [translation]\n\n"
-                                    "If no text found, reply: No text found."
-                                ),
-                            },
-                        ],
-                    }],
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
+                                        "Format:\n📷 [original text]\n→ [translation]\n\n"
+                                        "If no text found, reply: No text found."
+                                    ),
+                                },
+                            ],
+                        }
+                    ],
                 )
                 if not response.content:
                     return None
@@ -431,8 +427,13 @@ class Translator:
             return text
 
         leak_markers = (
-            "wait,", "let me", "i need to", "i should", "translating",
-            "note:", "sorry",
+            "wait,",
+            "let me",
+            "i need to",
+            "i should",
+            "translating",
+            "note:",
+            "sorry",
         )
 
         # Build set of original lines for echo detection
@@ -464,7 +465,7 @@ class Translator:
             strip_prefixes = ("translation:", "here is the translation:", "the translation is:")
             for prefix in strip_prefixes:
                 if lower.startswith(prefix):
-                    stripped = stripped[len(prefix):].strip()
+                    stripped = stripped[len(prefix) :].strip()
                     log.warning("leaked_prefix_stripped", raw=stripped[:100])
                     break
             cleaned.append(stripped)
@@ -477,9 +478,7 @@ class Translator:
 
         return "\n".join(cleaned) if cleaned else text
 
-    async def translate(
-        self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
-    ) -> str | None:
+    async def translate(self, chat_id: int, text: str, target_lang: str, sender_name: str = "") -> str | None:
         # Try instant phrase lookup first
         quick = self.lookup_phrase(text, target_lang)
         if quick is not None:
@@ -583,7 +582,7 @@ class Translator:
                 if len(lines) == 2:
                     last_line = lines[1].strip()
                     if last_line.upper().startswith("PRONUNCIATION:"):
-                        pronunciation = last_line[len("PRONUNCIATION:"):].strip()
+                        pronunciation = last_line[len("PRONUNCIATION:") :].strip()
                         raw = lines[0]  # Remove pronunciation line from translation
 
                 translation = self._clean_response(raw, original=text)

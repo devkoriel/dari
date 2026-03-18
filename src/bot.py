@@ -94,9 +94,7 @@ def create_app(config: Config) -> Application:
 
     # --- Admin gate ---
 
-    async def handle_chat_member(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         member_update = update.my_chat_member
         if member_update is None:
             return
@@ -117,9 +115,7 @@ def create_app(config: Config) -> Application:
 
     # --- /help command ---
 
-    async def handle_help(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None:
             return
@@ -127,9 +123,7 @@ def create_app(config: Config) -> Application:
 
     # --- /lang command ---
 
-    async def handle_lang(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -168,9 +162,7 @@ def create_app(config: Config) -> Application:
 
     # --- /stats command ---
 
-    async def handle_stats(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -186,7 +178,7 @@ def create_app(config: Config) -> Application:
 
         stats = translator.stats
         lines = [
-            f"📊 Bot Stats",
+            "📊 Bot Stats",
             f"Uptime: {uptime_str}",
             f"Translated: {stats['messages']}",
             f"API calls: {stats['api_calls']}",
@@ -214,9 +206,7 @@ def create_app(config: Config) -> Application:
 
     # --- /learn command ---
 
-    async def handle_learn(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -246,9 +236,7 @@ def create_app(config: Config) -> Application:
 
     # --- /say command ---
 
-    async def handle_say(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_say(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -282,9 +270,7 @@ def create_app(config: Config) -> Application:
 
     # --- /teach command ---
 
-    async def handle_teach(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_teach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -318,9 +304,7 @@ def create_app(config: Config) -> Application:
 
     # --- /tr command (reply-to-translate) ---
 
-    async def handle_tr(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_tr(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -352,9 +336,7 @@ def create_app(config: Config) -> Application:
 
     # --- /dday command ---
 
-    async def handle_dday(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_dday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -368,7 +350,9 @@ def create_app(config: Config) -> Application:
 
         if args and args[0].lower() == "set":
             if len(args) < 2:
-                await message.reply_text("Usage: /dday set YYYY-MM-DD [label]\nExample: /dday set 2024-06-15 Anniversary")
+                await message.reply_text(
+                    "Usage: /dday set YYYY-MM-DD [label]\nExample: /dday set 2024-06-15 Anniversary"
+                )
                 return
             try:
                 date = datetime.date.fromisoformat(args[1])
@@ -464,10 +448,14 @@ def create_app(config: Config) -> Application:
         today = datetime.date.today().isoformat()
         existing_first = store.get("first_today", "value")
         if not existing_first or existing_first.get("date") != today:
-            store.set("first_today", "value", {
-                "date": today,
-                "who": f"{sender_name} at {datetime.datetime.now(KST).strftime('%H:%M')}",
-            })
+            store.set(
+                "first_today",
+                "value",
+                {
+                    "date": today,
+                    "who": f"{sender_name} at {datetime.datetime.now(KST).strftime('%H:%M')}",
+                },
+            )
 
         if translator.stats["messages"] % 10 == 0:
             store.save()
@@ -477,9 +465,7 @@ def create_app(config: Config) -> Application:
 
         async with semaphore:
             if learn_on and target_lang != "en":
-                translation, pronunciation = await translator.translate_learn(
-                    chat_id, text, target_lang, sender_name
-                )
+                translation, pronunciation = await translator.translate_learn(chat_id, text, target_lang, sender_name)
             else:
                 translation = await translator.translate(chat_id, text, target_lang, sender_name)
 
@@ -512,9 +498,7 @@ def create_app(config: Config) -> Application:
 
     # --- Message handlers ---
 
-    async def handle_message(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         nonlocal last_activity
         last_activity = time.monotonic()
 
@@ -542,7 +526,7 @@ def create_app(config: Config) -> Application:
             await message.reply_text(text, reply_to_message_id=reply_to)
         else:
             for i in range(0, len(text), 4096):
-                chunk = text[i:i + 4096]
+                chunk = text[i : i + 4096]
                 mid = reply_to if i == 0 else None
                 await message.reply_text(chunk, reply_to_message_id=mid)
 
@@ -598,9 +582,7 @@ def create_app(config: Config) -> Application:
 
         async with semaphore:
             if learn_on and target_lang != "en":
-                translation, pronunciation = await translator.translate_learn(
-                    chat_id, text, target_lang, sender_name
-                )
+                translation, pronunciation = await translator.translate_learn(chat_id, text, target_lang, sender_name)
             else:
                 translation = await translator.translate(chat_id, text, target_lang, sender_name)
 
@@ -627,9 +609,7 @@ def create_app(config: Config) -> Application:
         await _send_reply(message, reply_text, message.message_id)
         log.info("media_translated", sender=sender_name, chat_id=chat_id, type=icon)
 
-    async def handle_voice(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         nonlocal last_activity
         last_activity = time.monotonic()
 
@@ -647,9 +627,7 @@ def create_app(config: Config) -> Application:
 
         await _transcribe_and_reply(update, context, voice.file_id, user_id, "🎤")
 
-    async def handle_video(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         nonlocal last_activity
         last_activity = time.monotonic()
 
@@ -664,22 +642,16 @@ def create_app(config: Config) -> Application:
 
         video_note = message.video_note
         if video_note is not None:
-            await _transcribe_and_reply(
-                update, context, video_note.file_id, user_id, "🎥", filename="video.mp4"
-            )
+            await _transcribe_and_reply(update, context, video_note.file_id, user_id, "🎥", filename="video.mp4")
             return
 
         video = message.video
         if video is not None:
-            await _transcribe_and_reply(
-                update, context, video.file_id, user_id, "🎬", filename="video.mp4"
-            )
+            await _transcribe_and_reply(update, context, video.file_id, user_id, "🎬", filename="video.mp4")
 
     # --- Photo handler (image translation) ---
 
-    async def handle_photo(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         nonlocal last_activity
         last_activity = time.monotonic()
 

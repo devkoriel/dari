@@ -61,12 +61,12 @@ def load_config() -> Config:
     raw_minute = os.environ.get("DAILY_QUOTE_MINUTE", "0")
     try:
         daily_quote_hour = int(raw_hour)
-    except ValueError:
-        raise ValueError(f"DAILY_QUOTE_HOUR must be an integer, got '{raw_hour}'")
+    except ValueError as e:
+        raise ValueError(f"DAILY_QUOTE_HOUR must be an integer, got '{raw_hour}'") from e
     try:
         daily_quote_minute = int(raw_minute)
-    except ValueError:
-        raise ValueError(f"DAILY_QUOTE_MINUTE must be an integer, got '{raw_minute}'")
+    except ValueError as e:
+        raise ValueError(f"DAILY_QUOTE_MINUTE must be an integer, got '{raw_minute}'") from e
     if not (0 <= daily_quote_hour <= 23):
         raise ValueError(f"DAILY_QUOTE_HOUR must be 0-23, got {daily_quote_hour}")
     if not (0 <= daily_quote_minute <= 59):
@@ -76,8 +76,8 @@ def load_config() -> Config:
     webhook_port_raw = os.environ.get("WEBHOOK_PORT", "8443")
     try:
         webhook_port = int(webhook_port_raw)
-    except ValueError:
-        raise ValueError(f"WEBHOOK_PORT must be an integer, got '{webhook_port_raw}'")
+    except ValueError as e:
+        raise ValueError(f"WEBHOOK_PORT must be an integer, got '{webhook_port_raw}'") from e
 
     return Config(
         telegram_token=token,

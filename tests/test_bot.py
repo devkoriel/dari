@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram.ext import CommandHandler, MessageHandler
 
-from src.config import Config
 from src.bot import create_app
+from src.config import Config
 
 
 @pytest.fixture
@@ -135,9 +135,7 @@ class TestHandleMessage:
             with patch("src.bot.Translator.is_same_language", return_value=False):
                 await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_called_once_with(
-            "⚠️ hello", reply_to_message_id=42
-        )
+        update.message.reply_text.assert_called_once_with("⚠️ hello", reply_to_message_id=42)
 
     @pytest.mark.asyncio
     async def test_skips_same_language(self, config):
