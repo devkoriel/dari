@@ -31,7 +31,16 @@ def main() -> None:
     log.info("starting_bot", model=config.claude_model, users=len(config.user_map))
 
     app = create_app(config)
-    app.run_polling(allowed_updates=["message", "my_chat_member"])
+    app.run_polling(
+        allowed_updates=["message", "my_chat_member"],
+        drop_pending_updates=True,
+        poll_interval=1.0,
+        timeout=30,
+        read_timeout=15,
+        write_timeout=15,
+        connect_timeout=15,
+        pool_timeout=15,
+    )
 
 
 if __name__ == "__main__":

@@ -672,6 +672,11 @@ def create_app(config: Config) -> Application:
             except Exception:
                 log.exception("daily_quote_send_failed", user_id=uid)
 
+    # --- Error handler ---
+
+    async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        log.exception("unhandled_error", error=str(context.error))
+
     # --- Build app ---
 
     async def on_shutdown(_app: Application) -> None:
@@ -679,6 +684,7 @@ def create_app(config: Config) -> Application:
         log.info("shutdown_save_complete")
 
     app = Application.builder().token(config.telegram_token).build()
+    app.add_error_handler(on_error)
     app.post_shutdown = on_shutdown
     app.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("help", handle_help))
