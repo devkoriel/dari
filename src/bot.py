@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 from src.config import Config
-from src.quotes import random_quote
+from src.quotes import random_quote, random_vocabulary
 from src.storage import JsonStore
 from src.transcriber import Transcriber
 from src.translator import LANGUAGE_NAMES, Translator, detect_source_language
@@ -61,14 +61,18 @@ Keep it to 4-6 lines max. Be concise and fun. Traditional Chinese (繁體中文)
 HELP_TEXT = """🤖 Trans Bot Commands
 
 /lang ko|en|zh|reset — Change translation target
-/learn on|off — Show original → translation
+/learn on|off — Show original + pronunciation
 /say <phrase> — How to say it in the other language
 /teach <word> — Cultural explanation of a word
+/tr — Reply to any message to translate it
 /dday — Show D-day counter
 /dday set YYYY-MM-DD <label> — Add a date
 /dday del <label> — Remove a date
 /stats — Bot statistics (admin only)
-/help — This message"""
+/help — This message
+
+📷 Send a photo to extract & translate text
+🎤 Voice messages are transcribed & translated"""
 
 
 def create_app(config: Config) -> Application:
@@ -304,6 +308,40 @@ def create_app(config: Config) -> Application:
         else:
             await message.reply_text("Sorry, try again later.")
 
+    # --- /tr command (reply-to-translate) ---
+
+    async def handle_tr(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+
+        user_id = str(message.from_user.id)
+        target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
+        if target_lang is None:
+            return
+
+        replied = message.reply_to_message
+        if replied is None:
+            await message.reply_text("Reply to a message with /tr to translate it.")
+            return
+
+        text = replied.text or replied.caption
+        if not text or translator.should_skip(text):
+            await message.reply_text("No translatable text found.")
+            return
+
+        async with semaphore:
+            translation = await translator.translate(
+                message.chat.id, text, target_lang, message.from_user.first_name or "Unknown"
+            )
+
+        if translation:
+            await replied.reply_text(translation, reply_to_message_id=replied.message_id)
+        else:
+            await message.reply_text("Translation failed, try again.")
+
     # --- /dday command ---
 
     async def handle_dday(
@@ -447,7 +485,24 @@ def create_app(config: Config) -> Application:
 
         learn_on = store.get("learn_mode", user_id, False)
         if learn_on:
-            reply_text = f"{text}\n→ {translation}"
+            clean_translation = translation.lstrip("\U0001f1f0\U0001f1f7\U0001f1f9\U0001f1fc\U0001f1fa\U0001f1f8 ")
+            if target_lang == "zh-TW":
+                pron_prompt = f"Give ONLY the pinyin (with tones) for: {clean_translation}\nOutput pinyin only, nothing else."
+            elif target_lang == "ko":
+                pron_prompt = f"Give ONLY the romanization for: {clean_translation}\nOutput romanization only, nothing else."
+            else:
+                pron_prompt = None
+
+            if pron_prompt:
+                pronunciation = await translator.ask_claude(
+                    "You output ONLY romanization/pinyin. No explanations.", pron_prompt, max_tokens=60
+                )
+                if pronunciation:
+                    reply_text = f"{text}\n→ {translation}\n🗣 {pronunciation}"
+                else:
+                    reply_text = f"{text}\n→ {translation}"
+            else:
+                reply_text = f"{text}\n→ {translation}"
         else:
             reply_text = translation
 
@@ -487,7 +542,8 @@ def create_app(config: Config) -> Application:
             return
 
         user_id = str(message.from_user.id)
-        if config.target_language(user_id) is None:
+        target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
+        if target_lang is None:
             return
 
         voice = message.voice or message.audio
@@ -500,21 +556,80 @@ def create_app(config: Config) -> Application:
         async with semaphore:
             text = await transcriber.transcribe(bytes(audio_bytes))
 
-        if not text:
+        if not text or translator.should_skip(text):
             return
 
         sender_name = message.from_user.first_name or "Unknown"
         chat_id = message.chat.id
 
-        await _translate_and_reply(update, context, chat_id, user_id, sender_name, text)
+        if translator.is_same_language(text, target_lang):
+            translator.stats["skipped_same_lang"] += 1
+            await message.reply_text(
+                f"🎤 {text}",
+                reply_to_message_id=message.message_id,
+            )
+            return
+
+        translator.stats["messages"] += 1
+
+        async with semaphore:
+            translation = await translator.translate(chat_id, text, target_lang, sender_name)
+
+        if translation:
+            translator.add_message(
+                chat_id=chat_id,
+                sender=sender_name,
+                original=text,
+                translation=translation,
+            )
+            await message.reply_text(
+                f"🎤 {text}\n→ {translation}",
+                reply_to_message_id=message.message_id,
+            )
+            log.info("voice_translated", sender=sender_name, chat_id=chat_id)
+        else:
+            await message.reply_text(
+                f"🎤 {text}",
+                reply_to_message_id=message.message_id,
+            )
+
+    # --- Photo handler (image translation) ---
+
+    async def handle_photo(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+        if message.caption:
+            return
+        if not message.photo:
+            return
+
+        user_id = str(message.from_user.id)
+        target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
+        if target_lang is None:
+            return
+
+        photo = message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        image_bytes = await file.download_as_bytearray()
+
+        async with semaphore:
+            result = await translator.translate_image(bytes(image_bytes), "image/jpeg", target_lang)
+
+        if result:
+            await message.reply_text(result, reply_to_message_id=message.message_id)
 
     # --- Daily quote job ---
 
     async def send_daily_quote(context: CallbackContext) -> None:
         quote = random_quote()
+        vocab = random_vocabulary()
+        text = f"{quote}\n\n{vocab}"
         for uid in config.user_map:
             try:
-                await context.bot.send_message(chat_id=int(uid), text=quote)
+                await context.bot.send_message(chat_id=int(uid), text=text)
             except Exception:
                 log.exception("daily_quote_send_failed", user_id=uid)
 
@@ -533,6 +648,7 @@ def create_app(config: Config) -> Application:
     app.add_handler(CommandHandler("learn", handle_learn))
     app.add_handler(CommandHandler("say", handle_say))
     app.add_handler(CommandHandler("teach", handle_teach))
+    app.add_handler(CommandHandler("tr", handle_tr))
     app.add_handler(CommandHandler("dday", handle_dday))
     app.add_handler(
         MessageHandler(
@@ -541,6 +657,7 @@ def create_app(config: Config) -> Application:
         )
     )
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO & ~filters.CAPTION, handle_photo))
 
     # Schedule daily quote
     if app.job_queue is not None:

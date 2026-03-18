@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import time
 import unicodedata
 from collections import OrderedDict, deque
@@ -318,6 +319,45 @@ class Translator:
             f"Translate the following message{sender_info} to {lang_name}:\n{text}"
         )
         return [{"role": "user", "content": user_content}]
+
+    async def translate_image(
+        self, image_bytes: bytes, media_type: str, target_lang: str
+    ) -> str | None:
+        self.stats["api_calls"] += 1
+        lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
+        try:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=512,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": base64.b64encode(image_bytes).decode(),
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
+                                "Format:\n📷 [original text]\n→ [translation]\n\n"
+                                "If no text found, reply: No text found."
+                            ),
+                        },
+                    ],
+                }],
+            )
+            if not response.content:
+                return None
+            return response.content[0].text.strip()
+        except Exception:
+            self.stats["errors"] += 1
+            log.exception("image_translation_failed")
+            return None
 
     async def ask_claude(self, system: str, user_msg: str, max_tokens: int = 512) -> str | None:
         self.stats["api_calls"] += 1
