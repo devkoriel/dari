@@ -72,7 +72,8 @@ HELP_TEXT = """🤖 Trans Bot Commands
 /help — This message
 
 📷 Send a photo to extract & translate text
-🎤 Voice messages are transcribed & translated"""
+🎤 Voice messages are transcribed & translated
+🎥 Video/video notes are transcribed & translated"""
 
 
 def create_app(config: Config) -> Application:
@@ -531,30 +532,26 @@ def create_app(config: Config) -> Application:
 
         await _translate_and_reply(update, context, chat_id, user_id, sender_name, text)
 
-    async def handle_voice(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    async def _transcribe_and_reply(
+        update: Update,
+        file_id: str,
+        user_id: str,
+        icon: str,
+        filename: str = "voice.ogg",
     ) -> None:
         message = update.message
-        if message is None or message.from_user is None:
+        if message is None:
             return
 
-        if not transcriber.enabled:
-            return
-
-        user_id = str(message.from_user.id)
         target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
         if target_lang is None:
             return
 
-        voice = message.voice or message.audio
-        if voice is None:
-            return
-
-        file = await context.bot.get_file(voice.file_id)
+        file = await update.get_bot().get_file(file_id)
         audio_bytes = await file.download_as_bytearray()
 
         async with semaphore:
-            text = await transcriber.transcribe(bytes(audio_bytes))
+            text = await transcriber.transcribe(bytes(audio_bytes), filename=filename)
 
         if not text or translator.should_skip(text):
             return
@@ -565,7 +562,7 @@ def create_app(config: Config) -> Application:
         if translator.is_same_language(text, target_lang):
             translator.stats["skipped_same_lang"] += 1
             await message.reply_text(
-                f"🎤 {text}",
+                f"{icon} {text}",
                 reply_to_message_id=message.message_id,
             )
             return
@@ -583,14 +580,56 @@ def create_app(config: Config) -> Application:
                 translation=translation,
             )
             await message.reply_text(
-                f"🎤 {text}\n→ {translation}",
+                f"{icon} {text}\n→ {translation}",
                 reply_to_message_id=message.message_id,
             )
-            log.info("voice_translated", sender=sender_name, chat_id=chat_id)
+            log.info("media_translated", sender=sender_name, chat_id=chat_id, type=icon)
         else:
             await message.reply_text(
-                f"🎤 {text}",
+                f"{icon} {text}",
                 reply_to_message_id=message.message_id,
+            )
+
+    async def handle_voice(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+
+        if not transcriber.enabled:
+            return
+
+        user_id = str(message.from_user.id)
+        voice = message.voice or message.audio
+        if voice is None:
+            return
+
+        await _transcribe_and_reply(update, voice.file_id, user_id, "🎤")
+
+    async def handle_video(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+
+        if not transcriber.enabled:
+            return
+
+        user_id = str(message.from_user.id)
+
+        video_note = message.video_note
+        if video_note is not None:
+            await _transcribe_and_reply(
+                update, video_note.file_id, user_id, "🎥", filename="video.mp4"
+            )
+            return
+
+        video = message.video
+        if video is not None:
+            await _transcribe_and_reply(
+                update, video.file_id, user_id, "🎬", filename="video.mp4"
             )
 
     # --- Photo handler (image translation) ---
@@ -657,6 +696,7 @@ def create_app(config: Config) -> Application:
         )
     )
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+    app.add_handler(MessageHandler(filters.VIDEO_NOTE | filters.VIDEO, handle_video))
     app.add_handler(MessageHandler(filters.PHOTO & ~filters.CAPTION, handle_photo))
 
     # Schedule daily quote
