@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.koriel.telegram-translator-bot</string>
+    <string>com.koriel.dari</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/koriel/.local/bin/uv</string>
@@ -13,13 +13,13 @@
         <string>src</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/koriel/Development/telegram-translator-bot</string>
+    <string>/Users/koriel/Development/dari</string>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/koriel/Library/Logs/telegram-translator-bot.log</string>
+    <string>/Users/koriel/Library/Logs/dari.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/koriel/Library/Logs/telegram-translator-bot.log</string>
+    <string>/Users/koriel/Library/Logs/dari.log</string>
     <key>ThrottleInterval</key>
     <integer>10</integer>
 </dict>
