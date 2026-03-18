@@ -194,10 +194,9 @@ def create_app(config: Config) -> Application:
                 count = us.get("count", 0)
                 lines.append(f"  {name}: {count} messages")
 
-        today = datetime.date.today().isoformat()
-        first_today = store.get("first_today", today)
-        if first_today:
-            lines.append(f"\n🌅 First message today: {first_today}")
+        first_today = store.get("first_today", "value")
+        if first_today and first_today.get("date") == datetime.date.today().isoformat():
+            lines.append(f"\n🌅 First message today: {first_today['who']}")
 
         await message.reply_text("\n".join(lines))
 
@@ -417,9 +416,12 @@ def create_app(config: Config) -> Application:
         store.set("user_stats", user_id, us)
 
         today = datetime.date.today().isoformat()
-        existing_first = store.get("first_today", today)
-        if not existing_first:
-            store.set("first_today", today, f"{sender_name} at {datetime.datetime.now(KST).strftime('%H:%M')}")
+        existing_first = store.get("first_today", "value")
+        if not existing_first or existing_first.get("date") != today:
+            store.set("first_today", "value", {
+                "date": today,
+                "who": f"{sender_name} at {datetime.datetime.now(KST).strftime('%H:%M')}",
+            })
 
         if translator.stats["messages"] % 10 == 0:
             store.save()
@@ -518,7 +520,12 @@ def create_app(config: Config) -> Application:
 
     # --- Build app ---
 
+    async def on_shutdown(_app: Application) -> None:
+        store.save()
+        log.info("shutdown_save_complete")
+
     app = Application.builder().token(config.telegram_token).build()
+    app.post_shutdown = on_shutdown
     app.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("help", handle_help))
     app.add_handler(CommandHandler("lang", handle_lang))

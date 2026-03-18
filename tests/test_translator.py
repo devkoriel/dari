@@ -315,10 +315,8 @@ class TestCleanResponse:
 
     def test_clean_translation_prefix(self):
         raw = "Translation: 想你了"
-        # Single line starting with "translation:" — still returned as-is
-        # (the marker detection logs a warning but doesn't alter)
         result = Translator._clean_response(raw)
-        assert result == "Translation: 想你了"
+        assert result == "想你了"
 
     def test_clean_multiline_with_meta_and_original(self):
         raw = (

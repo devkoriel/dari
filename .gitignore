@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 .python-version
+data/
+.pytest_cache/

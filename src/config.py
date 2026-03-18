@@ -55,8 +55,20 @@ def load_config() -> Config:
     model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     groq_api_key = os.environ.get("GROQ_API_KEY", "")
     data_dir = os.environ.get("DATA_DIR", "data")
-    daily_quote_hour = int(os.environ.get("DAILY_QUOTE_HOUR", "9"))
-    daily_quote_minute = int(os.environ.get("DAILY_QUOTE_MINUTE", "0"))
+    raw_hour = os.environ.get("DAILY_QUOTE_HOUR", "9")
+    raw_minute = os.environ.get("DAILY_QUOTE_MINUTE", "0")
+    try:
+        daily_quote_hour = int(raw_hour)
+    except ValueError:
+        raise ValueError(f"DAILY_QUOTE_HOUR must be an integer, got '{raw_hour}'")
+    try:
+        daily_quote_minute = int(raw_minute)
+    except ValueError:
+        raise ValueError(f"DAILY_QUOTE_MINUTE must be an integer, got '{raw_minute}'")
+    if not (0 <= daily_quote_hour <= 23):
+        raise ValueError(f"DAILY_QUOTE_HOUR must be 0-23, got {daily_quote_hour}")
+    if not (0 <= daily_quote_minute <= 59):
+        raise ValueError(f"DAILY_QUOTE_MINUTE must be 0-59, got {daily_quote_minute}")
     anniversary_date = os.environ.get("ANNIVERSARY_DATE", "")
 
     return Config(

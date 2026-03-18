@@ -209,7 +209,7 @@ class Translator:
         model: str,
         max_context: int = 20,
     ) -> None:
-        self._client = AsyncAnthropic(api_key=api_key)
+        self._client = AsyncAnthropic(api_key=api_key, timeout=30.0)
         self._model = model
         self._max_context = max_context
         self._buffers: OrderedDict[int, deque[ContextEntry]] = OrderedDict()
@@ -368,9 +368,11 @@ class Translator:
                 text = lines[0].strip()
 
         lower = text.lower()
-        for marker in leak_markers:
-            if lower.startswith(marker):
-                log.warning("leaked_reasoning_detected", raw=raw[:200])
+        strip_prefixes = ("translation:", "here is the translation:", "the translation is:")
+        for prefix in strip_prefixes:
+            if lower.startswith(prefix):
+                text = text[len(prefix):].strip()
+                log.warning("leaked_reasoning_stripped", raw=raw[:200])
                 break
 
         return text
