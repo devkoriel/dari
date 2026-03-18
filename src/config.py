@@ -17,6 +17,8 @@ class Config:
     daily_quote_hour: int = 9
     daily_quote_minute: int = 0
     anniversary_date: str = ""
+    webhook_url: str = ""
+    webhook_port: int = 8443
 
     def target_language(self, user_id: str) -> str | None:
         return self.user_map.get(user_id)
@@ -70,6 +72,12 @@ def load_config() -> Config:
     if not (0 <= daily_quote_minute <= 59):
         raise ValueError(f"DAILY_QUOTE_MINUTE must be 0-59, got {daily_quote_minute}")
     anniversary_date = os.environ.get("ANNIVERSARY_DATE", "")
+    webhook_url = os.environ.get("WEBHOOK_URL", "")
+    webhook_port_raw = os.environ.get("WEBHOOK_PORT", "8443")
+    try:
+        webhook_port = int(webhook_port_raw)
+    except ValueError:
+        raise ValueError(f"WEBHOOK_PORT must be an integer, got '{webhook_port_raw}'")
 
     return Config(
         telegram_token=token,
@@ -82,4 +90,6 @@ def load_config() -> Config:
         daily_quote_hour=daily_quote_hour,
         daily_quote_minute=daily_quote_minute,
         anniversary_date=anniversary_date,
+        webhook_url=webhook_url,
+        webhook_port=webhook_port,
     )
