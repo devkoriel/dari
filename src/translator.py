@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 import unicodedata
 from collections import OrderedDict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import structlog
 from anthropic import AsyncAnthropic
@@ -198,6 +199,7 @@ class ContextEntry:
     sender: str
     original: str
     translation: str
+    timestamp: float = field(default_factory=time.monotonic)
 
 
 class Translator:
@@ -232,7 +234,7 @@ class Translator:
             ContextEntry(sender=sender, original=original, translation=translation)
         )
 
-    def get_context(self, chat_id: int) -> list[dict[str, str]]:
+    def get_context(self, chat_id: int) -> list[dict]:
         return [
             {"sender": e.sender, "original": e.original, "translation": e.translation}
             for e in self._get_buffer(chat_id)
@@ -269,14 +271,43 @@ class Translator:
             return True
         return False
 
+    @staticmethod
+    def _context_size_for_text(text: str) -> int:
+        """Scale context window based on message complexity."""
+        length = len(text.strip())
+        if length <= 5:
+            return 3
+        if length <= 20:
+            return 8
+        return 20
+
+    @staticmethod
+    def _format_age(seconds: float) -> str:
+        """Human-readable age like '2m ago' or 'just now'."""
+        if seconds < 60:
+            return "just now"
+        minutes = int(seconds / 60)
+        if minutes < 60:
+            return f"{minutes}m ago"
+        hours = int(minutes / 60)
+        return f"{hours}h ago"
+
     def _build_messages(
         self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
     ) -> list[dict[str, str]]:
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
+        now = time.monotonic()
+
+        # Scale how much context to include based on message complexity
+        max_entries = self._context_size_for_text(text)
+        buffer = list(self._get_buffer(chat_id))
+        recent = buffer[-max_entries:] if buffer else []
+
         context_lines = []
-        for entry in self._get_buffer(chat_id):
+        for entry in recent:
+            age = self._format_age(now - entry.timestamp)
             context_lines.append(
-                f"{entry.sender}: {entry.original} → {entry.translation}"
+                f"[{age}] {entry.sender}: {entry.original} → {entry.translation}"
             )
 
         context_block = "\n".join(context_lines) if context_lines else "(no prior messages)"

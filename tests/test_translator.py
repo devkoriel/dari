@@ -1,3 +1,4 @@
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -59,6 +60,56 @@ class TestContextBuffer:
         messages = t._build_messages(CHAT_ID, "hello", "ko", sender_name="Jinsoo")
         user_content = messages[0]["content"]
         assert "Jinsoo" in user_content
+
+    def test_build_prompt_includes_timestamp(self):
+        t = Translator(api_key="test", model="test-model")
+        t.add_message(chat_id=CHAT_ID, sender="Alice", original="hello", translation="你好")
+        messages = t._build_messages(CHAT_ID, "how are you", "ko")
+        user_content = messages[0]["content"]
+        assert "just now" in user_content
+
+
+class TestContextScaling:
+    def test_short_message_gets_small_context(self):
+        assert Translator._context_size_for_text("ok") == 3
+
+    def test_medium_message_gets_medium_context(self):
+        assert Translator._context_size_for_text("오늘 뭐 먹었어?") == 8
+
+    def test_long_message_gets_full_context(self):
+        assert Translator._context_size_for_text("This is a much longer message that needs full context to translate properly") == 20
+
+    def test_short_message_limits_context_entries(self):
+        t = Translator(api_key="test", model="test-model")
+        for i in range(10):
+            t.add_message(chat_id=CHAT_ID, sender="User", original=f"msg{i}", translation=f"tr{i}")
+        # "ok" is 2 chars → context_size = 3, so only last 3 entries
+        messages = t._build_messages(CHAT_ID, "ok", "ko")
+        content = messages[0]["content"]
+        assert "msg7" in content
+        assert "msg8" in content
+        assert "msg9" in content
+        assert "msg0" not in content
+
+    def test_long_message_uses_full_context(self):
+        t = Translator(api_key="test", model="test-model")
+        for i in range(10):
+            t.add_message(chat_id=CHAT_ID, sender="User", original=f"msg{i}", translation=f"tr{i}")
+        messages = t._build_messages(CHAT_ID, "This is a longer sentence that needs context", "ko")
+        content = messages[0]["content"]
+        assert "msg0" in content
+        assert "msg9" in content
+
+
+class TestFormatAge:
+    def test_just_now(self):
+        assert Translator._format_age(30) == "just now"
+
+    def test_minutes(self):
+        assert Translator._format_age(180) == "3m ago"
+
+    def test_hours(self):
+        assert Translator._format_age(7200) == "2h ago"
 
 
 class TestSameLanguageDetection:
