@@ -33,7 +33,7 @@ class JsonStore:
                 if key not in data:
                     data[key] = dict(default) if isinstance(default, dict) else default
             return data
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             log.exception("storage_load_failed", path=str(self._path))
             return {k: dict(v) if isinstance(v, dict) else v for k, v in _DEFAULT_DATA.items()}
 
