@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import os
 import time
 
 import structlog
@@ -26,6 +27,7 @@ log = structlog.get_logger()
 
 MAX_CONCURRENT = 3
 ERROR_NOTIFY_THRESHOLD = 5
+WATCHDOG_TIMEOUT = 1800  # 30 minutes with no updates → force restart
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 LANG_SHORTCUTS = {
@@ -86,6 +88,7 @@ def create_app(config: Config) -> Application:
     transcriber = Transcriber(groq_api_key=config.groq_api_key)
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
     start_time = time.monotonic()
+    last_activity = time.monotonic()
     consecutive_errors = 0
     error_notified = False
 
@@ -518,6 +521,9 @@ def create_app(config: Config) -> Application:
     async def handle_message(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        nonlocal last_activity
+        last_activity = time.monotonic()
+
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -615,6 +621,9 @@ def create_app(config: Config) -> Application:
     async def handle_voice(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        nonlocal last_activity
+        last_activity = time.monotonic()
+
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -632,6 +641,9 @@ def create_app(config: Config) -> Application:
     async def handle_video(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        nonlocal last_activity
+        last_activity = time.monotonic()
+
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -659,6 +671,9 @@ def create_app(config: Config) -> Application:
     async def handle_photo(
         update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        nonlocal last_activity
+        last_activity = time.monotonic()
+
         message = update.message
         if message is None or message.from_user is None:
             return
@@ -693,6 +708,15 @@ def create_app(config: Config) -> Application:
                 await context.bot.send_message(chat_id=int(uid), text=text)
             except Exception:
                 log.warning("daily_quote_send_failed", user_id=uid)
+
+    # --- Watchdog: force exit if polling stalls ---
+
+    async def watchdog_check(context: CallbackContext) -> None:
+        idle = time.monotonic() - last_activity
+        if idle > WATCHDOG_TIMEOUT:
+            log.error("watchdog_triggered", idle_seconds=int(idle))
+            store.save()
+            os._exit(1)  # Hard exit — launchd KeepAlive restarts us
 
     # --- Error handler ---
 
@@ -743,6 +767,8 @@ def create_app(config: Config) -> Application:
             tzinfo=KST,
         )
         app.job_queue.run_daily(send_daily_quote, time=quote_time)
+        app.job_queue.run_repeating(watchdog_check, interval=300, first=300)
         log.info("daily_quote_scheduled", time=quote_time.isoformat())
+        log.info("watchdog_enabled", timeout_seconds=WATCHDOG_TIMEOUT)
 
     return app
