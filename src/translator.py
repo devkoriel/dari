@@ -24,10 +24,11 @@ LANGUAGE_NAMES = {
 SYSTEM_PROMPT = """You are a translation engine. You receive a message and output ONLY its translation. Nothing else.
 
 ABSOLUTE RULES:
-1. Output ONLY the translated text. No thinking, no explanations, no "let me translate", no commentary.
+1. Output ONLY the translated text. ZERO other words. No thinking, no alternatives, no explanations, no meta-commentary.
 2. NEVER output the original text. NEVER repeat the input. NEVER add quotation marks.
-3. If you catch yourself writing anything other than the translation, STOP. Delete it. Output only the translation.
+3. ONE translation only. Do NOT provide multiple versions or revise your answer mid-response.
 4. PRESERVE the original formatting: line breaks, paragraphs, bullet points, structure. Translate everything.
+5. NEVER write in English unless the target language IS English. No English reasoning, no English notes.
 
 CONTEXT USAGE:
 - You receive recent conversation history for tone and flow ONLY.
@@ -434,6 +435,16 @@ class Translator:
             "translating",
             "note:",
             "sorry",
+            "actually,",
+            "actually ",
+            "hmm",
+            "ok so",
+            "ok,",
+            "the message",
+            "this means",
+            "i think",
+            "here's",
+            "here is",
         )
 
         # Build set of original lines for echo detection
@@ -455,7 +466,21 @@ class Translator:
             if any(lower.startswith(m) for m in leak_markers):
                 log.warning("leaked_reasoning_stripped", line=stripped[:100])
                 continue
-            if "translate" in lower and "message" in lower and len(stripped) < 80:
+            if "translate" in lower and len(stripped) < 80:
+                continue
+            # Catch English reasoning lines (e.g. "Actually, keeping it more concise...")
+            english_markers = (
+                "keeping",
+                "matching",
+                "more concise",
+                "better translation",
+                "the tone",
+                "the meaning",
+                "in this context",
+                "would be",
+            )
+            if any(m in lower for m in english_markers) and len(stripped) < 100:
+                log.warning("leaked_english_reasoning", line=stripped[:100])
                 continue
             # Strip echoed original text
             if original_lines and stripped in original_lines:

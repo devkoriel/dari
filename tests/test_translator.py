@@ -342,6 +342,22 @@ class TestCleanResponse:
         raw = "그렇지 못한 사람도 많거든\n也有很多人做不到呢"
         assert Translator._clean_response(raw) == "그렇지 못한 사람도 많거든\n也有很多人做不到呢"
 
+    def test_clean_strips_leaked_english_reasoning(self):
+        raw = (
+            "와 진짜 빨라! 어? 그럼 준비도 다 했다고?\n\n"
+            "진짜 빨라!\n\n"
+            "Actually, keeping it more concise and matching the excited"
+        )
+        original = "太快了吧！！！"
+        result = Translator._clean_response(raw, original=original)
+        assert "Actually" not in result
+        assert "keeping" not in result
+        assert "빨라" in result
+
+    def test_clean_strips_actually_prefix(self):
+        raw = "Actually, the translation should be:\n想你了"
+        assert Translator._clean_response(raw) == "想你了"
+
 
 class TestStats:
     def test_initial_stats(self):
