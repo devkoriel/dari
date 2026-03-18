@@ -1,0 +1,51 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+
+jobs:
+  test:
+    name: Test
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          uv sync
+
+      - name: Run tests
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          uv run python -m pytest tests/ -v
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest code
+        run: |
+          cd ~/Development/dari
+          git pull origin main
+
+      - name: Sync dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          cd ~/Development/dari
+          uv sync
+
+      - name: Restart bot
+        run: |
+          launchctl kickstart -k gui/$(id -u)/com.koriel.dari
+
+      - name: Verify bot started
+        run: |
+          sleep 3
+          launchctl list | grep "com.koriel.dari"
+          tail -3 ~/Library/Logs/dari.log
