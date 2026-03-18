@@ -60,7 +60,7 @@ Example: [1 example sentence in both languages]
 
 Keep it to 4-6 lines max. Be concise and fun. Traditional Chinese (繁體中文) only. Korean in 반말."""
 
-HELP_TEXT = """🤖 Trans Bot Commands
+HELP_TEXT = """🌉 Dari Commands
 
 /lang ko|en|zh|reset — Change translation target
 /learn on|off — Show original + pronunciation
