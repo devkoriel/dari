@@ -723,6 +723,7 @@ def create_app(config: Config) -> Application:
 
     async def on_shutdown(_app: Application) -> None:
         store.save()
+        await transcriber.close()
         log.info("shutdown_save_complete")
 
     app = (

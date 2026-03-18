@@ -349,10 +349,16 @@ class TestCleanResponse:
             "Actually, keeping it more concise and matching the excited"
         )
         original = "太快了吧！！！"
-        result = Translator._clean_response(raw, original=original)
+        result = Translator._clean_response(raw, original=original, target_lang="ko")
         assert "Actually" not in result
         assert "keeping" not in result
         assert "빨라" in result
+
+    def test_clean_preserves_english_markers_for_english_target(self):
+        """English reasoning markers should NOT be stripped when target is English."""
+        raw = "This would be a good meaning in this context"
+        result = Translator._clean_response(raw, target_lang="en")
+        assert result == raw
 
     def test_clean_strips_actually_prefix(self):
         raw = "Actually, the translation should be:\n想你了"

@@ -26,6 +26,11 @@ class Transcriber:
             )
         return self._client
 
+    async def close(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
     async def transcribe(self, audio_bytes: bytes, filename: str = "voice.ogg") -> str | None:
         if not self._enabled:
             return None

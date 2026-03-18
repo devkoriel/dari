@@ -359,12 +359,12 @@ class Translator:
         return [{"role": "user", "content": user_content}]
 
     async def translate_image(self, image_bytes: bytes, media_type: str, target_lang: str) -> str | None:
-        self.stats["api_calls"] += 1
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         b64_data = base64.b64encode(image_bytes).decode()
 
         for attempt in range(MAX_RETRIES + 1):
             try:
+                self.stats["api_calls"] += 1
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=512,
@@ -421,7 +421,7 @@ class Translator:
             return None
 
     @staticmethod
-    def _clean_response(raw: str, original: str = "") -> str:
+    def _clean_response(raw: str, original: str = "", target_lang: str = "") -> str:
         """Strip any leaked reasoning, meta-text, or echoed original from Claude's response."""
         text = raw.strip()
         if not text:
@@ -468,20 +468,22 @@ class Translator:
                 continue
             if "translate" in lower and len(stripped) < 80:
                 continue
-            # Catch English reasoning lines (e.g. "Actually, keeping it more concise...")
-            english_markers = (
-                "keeping",
-                "matching",
-                "more concise",
-                "better translation",
-                "the tone",
-                "the meaning",
-                "in this context",
-                "would be",
-            )
-            if any(m in lower for m in english_markers) and len(stripped) < 100:
-                log.warning("leaked_english_reasoning", line=stripped[:100])
-                continue
+            # Catch English reasoning lines — skip when target IS English to avoid
+            # stripping legitimate translations like "This would be great"
+            if target_lang != "en":
+                english_markers = (
+                    "keeping",
+                    "matching",
+                    "more concise",
+                    "better translation",
+                    "the tone",
+                    "the meaning",
+                    "in this context",
+                    "would be",
+                )
+                if any(m in lower for m in english_markers) and len(stripped) < 100:
+                    log.warning("leaked_english_reasoning", line=stripped[:100])
+                    continue
             # Strip echoed original text
             if original_lines and stripped in original_lines:
                 log.warning("echoed_original_stripped", line=stripped[:100])
@@ -542,7 +544,7 @@ class Translator:
                     log.warning("empty_api_response", chat_id=chat_id)
                     return None
                 raw = response.content[0].text.strip()
-                translation = self._clean_response(raw, original=text)
+                translation = self._clean_response(raw, original=text, target_lang=target_lang)
                 if not translation:
                     log.warning("empty_after_cleaning", chat_id=chat_id, raw=raw[:200])
                     return None
@@ -610,7 +612,7 @@ class Translator:
                         pronunciation = last_line[len("PRONUNCIATION:") :].strip()
                         raw = lines[0]  # Remove pronunciation line from translation
 
-                translation = self._clean_response(raw, original=text)
+                translation = self._clean_response(raw, original=text, target_lang=target_lang)
                 if not translation:
                     return (None, None)
 
