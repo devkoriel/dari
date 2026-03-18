@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 import unicodedata
@@ -8,6 +9,9 @@ from dataclasses import dataclass, field
 
 import structlog
 from anthropic import AsyncAnthropic
+
+MAX_RETRIES = 2
+RETRY_BACKOFF = 1.0
 
 log = structlog.get_logger()
 
@@ -20,9 +24,10 @@ LANGUAGE_NAMES = {
 SYSTEM_PROMPT = """You are a translation engine. You receive a message and output ONLY its translation. Nothing else.
 
 ABSOLUTE RULES:
-1. Output ONLY the translated text. ONE line. No thinking, no explanations, no "let me translate", no commentary.
+1. Output ONLY the translated text. No thinking, no explanations, no "let me translate", no commentary.
 2. NEVER output the original text. NEVER repeat the input. NEVER add quotation marks.
 3. If you catch yourself writing anything other than the translation, STOP. Delete it. Output only the translation.
+4. PRESERVE the original formatting: line breaks, paragraphs, bullet points, structure. Translate everything.
 
 CONTEXT USAGE:
 - You receive recent conversation history for tone and flow ONLY.
@@ -39,7 +44,24 @@ TONE:
 - Match emotional energy: cute→cute, playful→playful, ㅋㅋ→哈哈, ㅠㅠ→嗚嗚, 哈哈哈→ㅋㅋㅋ
 - Short messages get short translations. 고마워! → 謝啦！ not 非常感謝你！"""
 
-MAX_INPUT_LENGTH = 2000
+LEARN_SYSTEM_PROMPT = """You are a translation engine with pronunciation. You receive a message and output the translation AND pronunciation.
+
+OUTPUT FORMAT:
+[full translation preserving original formatting]
+
+PRONUNCIATION: [romanization of the translation on a single line]
+
+RULES:
+- The word "PRONUNCIATION:" followed by the romanization MUST be the very last line.
+- For Chinese translations: use pinyin with tone marks (e.g., PRONUNCIATION: xiǎng nǐ le)
+- For Korean translations: use romanization (e.g., PRONUNCIATION: bogosipeo)
+- For short messages: romanize the full translation.
+- For long messages: romanize only the first sentence or key phrase.
+- For English translations: skip the PRONUNCIATION line entirely.
+
+ALL OTHER RULES from the main translation engine apply (casual couple's chat, 반말, Taiwanese Mandarin, Traditional Chinese only)."""
+
+MAX_INPUT_LENGTH = 10000
 MAX_CHATS = 100
 
 LANG_LABELS = {
@@ -179,15 +201,24 @@ def _has_translatable_text(text: str) -> bool:
     return False
 
 
-def detect_source_language(text: str) -> str:
+def _count_script_chars(text: str) -> tuple[int, int, int]:
+    """Count Korean, Chinese, and Latin characters in text."""
     ko_count = 0
     zh_count = 0
+    en_count = 0
     for ch in text:
         cp = ord(ch)
         if 0xAC00 <= cp <= 0xD7AF or 0x3130 <= cp <= 0x318F:
             ko_count += 1
         elif 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
             zh_count += 1
+        elif 0x0041 <= cp <= 0x005A or 0x0061 <= cp <= 0x007A:
+            en_count += 1
+    return ko_count, zh_count, en_count
+
+
+def detect_source_language(text: str) -> str:
+    ko_count, zh_count, _ = _count_script_chars(text)
     if ko_count > 0 and ko_count >= zh_count:
         return "ko"
     if zh_count > 0:
@@ -210,7 +241,7 @@ class Translator:
         model: str,
         max_context: int = 20,
     ) -> None:
-        self._client = AsyncAnthropic(api_key=api_key, timeout=30.0)
+        self._client = AsyncAnthropic(api_key=api_key, timeout=120.0)
         self._model = model
         self._max_context = max_context
         self._buffers: OrderedDict[int, deque[ContextEntry]] = OrderedDict()
@@ -242,10 +273,20 @@ class Translator:
         ]
 
     def is_same_language(self, text: str, target_lang: str) -> bool:
-        source = detect_source_language(text)
-        if target_lang == "zh-TW":
-            return source == "zh-TW"
-        return source == target_lang
+        ko_count, zh_count, en_count = _count_script_chars(text)
+        total = ko_count + zh_count + en_count
+        if total == 0:
+            return True  # No letter chars — nothing to translate
+
+        if target_lang == "ko":
+            target_count = ko_count
+        elif target_lang == "zh-TW":
+            target_count = zh_count
+        else:
+            target_count = en_count
+
+        # Only skip if >90% of characters are already in the target language
+        return target_count / total > 0.9
 
     def lookup_phrase(self, text: str, target_lang: str) -> str | None:
         """Try instant lookup for common phrases. Returns full flagged translation or None."""
@@ -325,39 +366,45 @@ class Translator:
     ) -> str | None:
         self.stats["api_calls"] += 1
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
-        try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=512,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": base64.b64encode(image_bytes).decode(),
+        b64_data = base64.b64encode(image_bytes).decode()
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                response = await self._client.messages.create(
+                    model=self._model,
+                    max_tokens=512,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64_data,
+                                },
                             },
-                        },
-                        {
-                            "type": "text",
-                            "text": (
-                                f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
-                                "Format:\n📷 [original text]\n→ [translation]\n\n"
-                                "If no text found, reply: No text found."
-                            ),
-                        },
-                    ],
-                }],
-            )
-            if not response.content:
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
+                                    "Format:\n📷 [original text]\n→ [translation]\n\n"
+                                    "If no text found, reply: No text found."
+                                ),
+                            },
+                        ],
+                    }],
+                )
+                if not response.content:
+                    return None
+                return response.content[0].text.strip()
+            except Exception:
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    continue
+                self.stats["errors"] += 1
+                log.exception("image_translation_failed")
                 return None
-            return response.content[0].text.strip()
-        except Exception:
-            self.stats["errors"] += 1
-            log.exception("image_translation_failed")
-            return None
 
     async def ask_claude(self, system: str, user_msg: str, max_tokens: int = 512) -> str | None:
         self.stats["api_calls"] += 1
@@ -377,45 +424,58 @@ class Translator:
             return None
 
     @staticmethod
-    def _clean_response(raw: str) -> str:
-        """Strip any leaked reasoning or meta-text from Claude's response."""
+    def _clean_response(raw: str, original: str = "") -> str:
+        """Strip any leaked reasoning, meta-text, or echoed original from Claude's response."""
         text = raw.strip()
         if not text:
             return text
 
         leak_markers = (
-            "wait,", "let me", "i need to", "i should", "translation:", "here is",
-            "the translation", "translating", "note:", "sorry",
+            "wait,", "let me", "i need to", "i should", "translating",
+            "note:", "sorry",
         )
 
+        # Build set of original lines for echo detection
+        original_lines: set[str] = set()
+        if original:
+            for ol in original.strip().split("\n"):
+                ol_stripped = ol.strip()
+                if ol_stripped:
+                    original_lines.add(ol_stripped)
+
         lines = text.split("\n")
-        if len(lines) > 1:
-            candidates = []
-            for line in lines:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                lower = stripped.lower()
-                if any(lower.startswith(m) for m in leak_markers):
-                    continue
-                if "translate" in lower and "message" in lower:
-                    continue
-                candidates.append(stripped)
+        cleaned = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                cleaned.append("")  # Preserve paragraph breaks
+                continue
+            lower = stripped.lower()
+            if any(lower.startswith(m) for m in leak_markers):
+                log.warning("leaked_reasoning_stripped", line=stripped[:100])
+                continue
+            if "translate" in lower and "message" in lower and len(stripped) < 80:
+                continue
+            # Strip echoed original text
+            if original_lines and stripped in original_lines:
+                log.warning("echoed_original_stripped", line=stripped[:100])
+                continue
+            # Strip "translation:" prefix from first real line
+            strip_prefixes = ("translation:", "here is the translation:", "the translation is:")
+            for prefix in strip_prefixes:
+                if lower.startswith(prefix):
+                    stripped = stripped[len(prefix):].strip()
+                    log.warning("leaked_prefix_stripped", raw=stripped[:100])
+                    break
+            cleaned.append(stripped)
 
-            if candidates:
-                text = candidates[-1]
-            else:
-                text = lines[0].strip()
+        # Remove leading/trailing empty lines
+        while cleaned and not cleaned[0]:
+            cleaned.pop(0)
+        while cleaned and not cleaned[-1]:
+            cleaned.pop()
 
-        lower = text.lower()
-        strip_prefixes = ("translation:", "here is the translation:", "the translation is:")
-        for prefix in strip_prefixes:
-            if lower.startswith(prefix):
-                text = text[len(prefix):].strip()
-                log.warning("leaked_reasoning_stripped", raw=raw[:200])
-                break
-
-        return text
+        return "\n".join(cleaned) if cleaned else text
 
     async def translate(
         self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
@@ -429,7 +489,7 @@ class Translator:
         messages = self._build_messages(chat_id, text, target_lang, sender_name)
 
         # Scale max_tokens to input length
-        max_tokens = min(256, max(64, len(text) * 4))
+        max_tokens = min(4096, max(64, len(text) * 3))
 
         # Use prompt caching for the system prompt
         cached_system = [
@@ -440,31 +500,105 @@ class Translator:
             }
         ]
 
-        try:
-            response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=max_tokens,
-                system=cached_system,
-                messages=messages,
-            )
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                response = await self._client.messages.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    system=cached_system,
+                    messages=messages,
+                )
 
-            # Track cache usage
-            usage = response.usage
-            if hasattr(usage, "cache_read_input_tokens") and usage.cache_read_input_tokens:
-                self.stats["cache_reads"] += 1
+                # Track cache usage
+                usage = response.usage
+                if hasattr(usage, "cache_read_input_tokens") and usage.cache_read_input_tokens:
+                    self.stats["cache_reads"] += 1
 
-            if not response.content:
-                log.warning("empty_api_response", chat_id=chat_id)
+                if not response.content:
+                    log.warning("empty_api_response", chat_id=chat_id)
+                    return None
+                raw = response.content[0].text.strip()
+                translation = self._clean_response(raw, original=text)
+                if not translation:
+                    log.warning("empty_after_cleaning", chat_id=chat_id, raw=raw[:200])
+                    return None
+                source_lang = detect_source_language(text)
+                label = LANG_LABELS.get(source_lang, "")
+                return f"{label} {translation}" if label else translation
+            except Exception:
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    continue
+                self.stats["errors"] += 1
+                log.exception("translation_failed", target_lang=target_lang, attempts=attempt + 1)
                 return None
-            raw = response.content[0].text.strip()
-            translation = self._clean_response(raw)
-            if not translation:
-                log.warning("empty_after_cleaning", chat_id=chat_id, raw=raw[:200])
-                return None
-            source_lang = detect_source_language(text)
-            label = LANG_LABELS.get(source_lang, "")
-            return f"{label} {translation}" if label else translation
-        except Exception:
-            self.stats["errors"] += 1
-            log.exception("translation_failed", target_lang=target_lang)
-            return None
+
+    async def translate_learn(
+        self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
+    ) -> tuple[str | None, str | None]:
+        """Translate with pronunciation in a single API call.
+        Returns (flagged_translation, pronunciation) or (None, None) on failure.
+        """
+        if target_lang == "en":
+            result = await self.translate(chat_id, text, target_lang, sender_name)
+            return (result, None)
+
+        # Try phrase table first
+        quick = self.lookup_phrase(text, target_lang)
+        if quick is not None:
+            return (quick, None)
+
+        self.stats["api_calls"] += 1
+        messages = self._build_messages(chat_id, text, target_lang, sender_name)
+        max_tokens = min(4096, max(80, len(text) * 3))
+
+        cached_system = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT + "\n\n" + LEARN_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                response = await self._client.messages.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    system=cached_system,
+                    messages=messages,
+                )
+                usage = response.usage
+                if hasattr(usage, "cache_read_input_tokens") and usage.cache_read_input_tokens:
+                    self.stats["cache_reads"] += 1
+
+                if not response.content:
+                    return (None, None)
+
+                raw = response.content[0].text.strip()
+
+                # Extract pronunciation from the last line if it starts with "PRONUNCIATION:"
+                pronunciation = None
+                lines = raw.rsplit("\n", 1)
+                if len(lines) == 2:
+                    last_line = lines[1].strip()
+                    if last_line.upper().startswith("PRONUNCIATION:"):
+                        pronunciation = last_line[len("PRONUNCIATION:"):].strip()
+                        raw = lines[0]  # Remove pronunciation line from translation
+
+                translation = self._clean_response(raw, original=text)
+                if not translation:
+                    return (None, None)
+
+                source_lang = detect_source_language(text)
+                label = LANG_LABELS.get(source_lang, "")
+                flagged = f"{label} {translation}" if label else translation
+
+                return (flagged, pronunciation)
+            except Exception:
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    continue
+                self.stats["errors"] += 1
+                log.exception("translate_learn_failed", target_lang=target_lang)
+                return (None, None)

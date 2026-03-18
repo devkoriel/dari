@@ -301,7 +301,8 @@ class TestCleanResponse:
             "ㅋㅋㅋ 보고싶네\n\n"
             "哈哈哈 我想你了"
         )
-        assert Translator._clean_response(raw) == "哈哈哈 我想你了"
+        # Strips leaked "Wait," line, keeps the actual content
+        assert Translator._clean_response(raw) == "ㅋㅋㅋ 보고싶네\n\n哈哈哈 我想你了"
 
     def test_clean_leaked_let_me(self):
         raw = "Let me translate this:\n\n想你了"
@@ -324,8 +325,26 @@ class TestCleanResponse:
             "ㅋㅋㅋ 보고싶네\n"
             "哈哈哈 我想你了"
         )
-        # Should skip "Here is..." and the original Korean, take the Chinese
-        assert Translator._clean_response(raw) == "哈哈哈 我想你了"
+        # Strips "Here is..." leaked prefix, keeps all translation lines
+        assert Translator._clean_response(raw) == "ㅋㅋㅋ 보고싶네\n哈哈哈 我想你了"
+
+    def test_clean_preserves_multiline_translation(self):
+        raw = "第一行\n\n第二行\n\n第三行"
+        assert Translator._clean_response(raw) == "第一行\n\n第二行\n\n第三行"
+
+    def test_clean_strips_echoed_original(self):
+        original = "그렇지 못한 사람도 많거든"
+        raw = "그렇지 못한 사람도 많거든\n也有很多人做不到呢"
+        assert Translator._clean_response(raw, original=original) == "也有很多人做不到呢"
+
+    def test_clean_strips_echoed_multiline_original(self):
+        original = "첫째 줄\n둘째 줄"
+        raw = "첫째 줄\n둘째 줄\n第一行\n第二行"
+        assert Translator._clean_response(raw, original=original) == "第一行\n第二行"
+
+    def test_clean_no_strip_without_original(self):
+        raw = "그렇지 못한 사람도 많거든\n也有很多人做不到呢"
+        assert Translator._clean_response(raw) == "그렇지 못한 사람도 많거든\n也有很多人做不到呢"
 
 
 class TestStats:

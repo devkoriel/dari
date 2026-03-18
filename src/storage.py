@@ -14,6 +14,7 @@ _DEFAULT_DATA: dict[str, Any] = {
     "dday_dates": {},
     "learn_mode": {},
     "user_stats": {},
+    "lang_overrides": {},
 }
 
 

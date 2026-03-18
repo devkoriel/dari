@@ -45,6 +45,7 @@ def _make_text_update(user_id: int, text: str, chat_id: int = 12345, first_name:
     update.message.from_user.first_name = first_name
     update.message.text = text
     update.message.caption = None
+    update.message.photo = None
     update.message.chat.id = chat_id
     update.message.message_id = 42
     update.message.reply_text = AsyncMock()
@@ -57,6 +58,7 @@ def _make_caption_update(user_id: int, caption: str, chat_id: int = 12345, first
     update.message.from_user.first_name = first_name
     update.message.text = None
     update.message.caption = caption
+    update.message.photo = None
     update.message.chat.id = chat_id
     update.message.message_id = 43
     update.message.reply_text = AsyncMock()
@@ -125,7 +127,7 @@ class TestHandleMessage:
         update.message.reply_text.assert_called_once_with("🇹🇼 예쁘다", reply_to_message_id=43)
 
     @pytest.mark.asyncio
-    async def test_no_reply_when_translation_none(self, config):
+    async def test_shows_warning_when_translation_none(self, config):
         handler = self._get_handler(config)
         update = _make_text_update(user_id=111, text="hello")
 
@@ -133,7 +135,9 @@ class TestHandleMessage:
             with patch("src.bot.Translator.is_same_language", return_value=False):
                 await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_not_called()
+        update.message.reply_text.assert_called_once_with(
+            "⚠️ hello", reply_to_message_id=42
+        )
 
     @pytest.mark.asyncio
     async def test_skips_same_language(self, config):

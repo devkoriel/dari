@@ -79,8 +79,8 @@ HELP_TEXT = """🤖 Trans Bot Commands
 
 
 def create_app(config: Config) -> Application:
-    lang_overrides: dict[str, str] = {}
     store = JsonStore(f"{config.data_dir}/bot_data.json")
+    lang_overrides: dict[str, str] = dict(store.get_section("lang_overrides"))
     translator = Translator(
         api_key=config.anthropic_api_key,
         model=config.claude_model,
@@ -148,6 +148,8 @@ def create_app(config: Config) -> Application:
         arg = args[0].lower()
         if arg == "reset":
             lang_overrides.pop(user_id, None)
+            store.delete("lang_overrides", user_id)
+            store.save()
             default_lang = config.target_language(user_id)
             lang_name = LANGUAGE_NAMES.get(default_lang, default_lang)
             await message.reply_text(f"Reset to default: {lang_name}")
@@ -159,6 +161,8 @@ def create_app(config: Config) -> Application:
             return
 
         lang_overrides[user_id] = target
+        store.set("lang_overrides", user_id, target)
+        store.save()
         lang_name = LANGUAGE_NAMES.get(target, target)
         await message.reply_text(f"Target language set to: {lang_name}")
 
@@ -468,13 +472,22 @@ def create_app(config: Config) -> Application:
         if translator.stats["messages"] % 10 == 0:
             store.save()
 
+        learn_on = store.get("learn_mode", user_id, False)
+        pronunciation = None
+
         async with semaphore:
-            translation = await translator.translate(chat_id, text, target_lang, sender_name)
+            if learn_on and target_lang != "en":
+                translation, pronunciation = await translator.translate_learn(
+                    chat_id, text, target_lang, sender_name
+                )
+            else:
+                translation = await translator.translate(chat_id, text, target_lang, sender_name)
 
         if translation is None:
             consecutive_errors += 1
             if consecutive_errors >= ERROR_NOTIFY_THRESHOLD:
                 await _notify_admin_on_errors(context)
+            await _send_reply(update.message, f"⚠️ {text}", update.message.message_id)
             return
 
         consecutive_errors = 0
@@ -487,33 +500,14 @@ def create_app(config: Config) -> Application:
             translation=translation,
         )
 
-        learn_on = store.get("learn_mode", user_id, False)
         if learn_on:
-            clean_translation = translation.lstrip("\U0001f1f0\U0001f1f7\U0001f1f9\U0001f1fc\U0001f1fa\U0001f1f8 ")
-            if target_lang == "zh-TW":
-                pron_prompt = f"Give ONLY the pinyin (with tones) for: {clean_translation}\nOutput pinyin only, nothing else."
-            elif target_lang == "ko":
-                pron_prompt = f"Give ONLY the romanization for: {clean_translation}\nOutput romanization only, nothing else."
-            else:
-                pron_prompt = None
-
-            if pron_prompt:
-                pronunciation = await translator.ask_claude(
-                    "You output ONLY romanization/pinyin. No explanations.", pron_prompt, max_tokens=60
-                )
-                if pronunciation:
-                    reply_text = f"{text}\n→ {translation}\n🗣 {pronunciation}"
-                else:
-                    reply_text = f"{text}\n→ {translation}"
-            else:
-                reply_text = f"{text}\n→ {translation}"
+            reply_text = f"{text}\n→ {translation}"
+            if pronunciation:
+                reply_text += f"\n🗣 {pronunciation}"
         else:
             reply_text = translation
 
-        await update.message.reply_text(
-            reply_text,
-            reply_to_message_id=update.message.message_id,
-        )
+        await _send_reply(update.message, reply_text, update.message.message_id)
         log.info("translated", sender=sender_name, chat_id=chat_id, target=target_lang)
 
     # --- Message handlers ---
@@ -528,6 +522,10 @@ def create_app(config: Config) -> Application:
         if message is None or message.from_user is None:
             return
 
+        # Skip photo captions — handle_photo deals with photos + captions together
+        if message.photo:
+            return
+
         text = message.text or message.caption
         if not text:
             return
@@ -537,6 +535,16 @@ def create_app(config: Config) -> Application:
         chat_id = message.chat.id
 
         await _translate_and_reply(update, context, chat_id, user_id, sender_name, text)
+
+    async def _send_reply(message, text: str, reply_to: int | None = None) -> None:
+        """Send a reply, splitting into chunks if needed for Telegram's 4096 char limit."""
+        if len(text) <= 4096:
+            await message.reply_text(text, reply_to_message_id=reply_to)
+        else:
+            for i in range(0, len(text), 4096):
+                chunk = text[i:i + 4096]
+                mid = reply_to if i == 0 else None
+                await message.reply_text(chunk, reply_to_message_id=mid)
 
     async def _transcribe_and_reply(
         update: Update,
@@ -558,7 +566,6 @@ def create_app(config: Config) -> Application:
 
         file = await context.bot.get_file(file_id)
 
-        # Skip files larger than 20MB to avoid memory/API issues
         if file.file_size and file.file_size > 20 * 1024 * 1024:
             log.warning("media_too_large", size=file.file_size)
             return
@@ -576,31 +583,32 @@ def create_app(config: Config) -> Application:
 
         if translator.is_same_language(text, target_lang):
             translator.stats["skipped_same_lang"] += 1
-            await message.reply_text(
-                f"{icon} {text}",
-                reply_to_message_id=message.message_id,
-            )
+            await _send_reply(message, f"{icon} {text}", message.message_id)
             return
 
         translator.stats["messages"] += 1
 
-        # Track per-user stats
         us = store.get("user_stats", user_id) or {"name": sender_name, "count": 0}
         us["name"] = sender_name
         us["count"] = us.get("count", 0) + 1
         store.set("user_stats", user_id, us)
 
+        learn_on = store.get("learn_mode", user_id, False)
+        pronunciation = None
+
         async with semaphore:
-            translation = await translator.translate(chat_id, text, target_lang, sender_name)
+            if learn_on and target_lang != "en":
+                translation, pronunciation = await translator.translate_learn(
+                    chat_id, text, target_lang, sender_name
+                )
+            else:
+                translation = await translator.translate(chat_id, text, target_lang, sender_name)
 
         if translation is None:
             consecutive_errors += 1
             if consecutive_errors >= ERROR_NOTIFY_THRESHOLD:
                 await _notify_admin_on_errors(context)
-            await message.reply_text(
-                f"{icon} {text}",
-                reply_to_message_id=message.message_id,
-            )
+            await _send_reply(message, f"{icon} {text}", message.message_id)
             return
 
         consecutive_errors = 0
@@ -612,10 +620,11 @@ def create_app(config: Config) -> Application:
             original=text,
             translation=translation,
         )
-        await message.reply_text(
-            f"{icon} {text}\n→ {translation}",
-            reply_to_message_id=message.message_id,
-        )
+
+        reply_text = f"{icon} {text}\n→ {translation}"
+        if pronunciation:
+            reply_text += f"\n🗣 {pronunciation}"
+        await _send_reply(message, reply_text, message.message_id)
         log.info("media_translated", sender=sender_name, chat_id=chat_id, type=icon)
 
     async def handle_voice(
@@ -677,8 +686,6 @@ def create_app(config: Config) -> Application:
         message = update.message
         if message is None or message.from_user is None:
             return
-        if message.caption:
-            return
         if not message.photo:
             return
 
@@ -687,6 +694,7 @@ def create_app(config: Config) -> Application:
         if target_lang is None:
             return
 
+        # Extract and translate text from the image itself
         photo = message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         image_bytes = await file.download_as_bytearray()
@@ -696,6 +704,20 @@ def create_app(config: Config) -> Application:
 
         if result:
             await message.reply_text(result, reply_to_message_id=message.message_id)
+            # Add image translation to conversation context for follow-up messages
+            sender_name = message.from_user.first_name or "Unknown"
+            translator.add_message(
+                chat_id=message.chat.id,
+                sender=sender_name,
+                original="[photo]",
+                translation=result,
+            )
+
+        # Also translate the caption if present
+        caption = message.caption
+        if caption:
+            sender_name = message.from_user.first_name or "Unknown"
+            await _translate_and_reply(update, context, message.chat.id, user_id, sender_name, caption)
 
     # --- Daily quote job ---
 
@@ -709,9 +731,11 @@ def create_app(config: Config) -> Application:
             except Exception:
                 log.warning("daily_quote_send_failed", user_id=uid)
 
-    # --- Watchdog: force exit if polling stalls ---
+    # --- Watchdog: force exit if polling stalls (disabled in webhook mode) ---
 
     async def watchdog_check(context: CallbackContext) -> None:
+        if config.webhook_url:
+            return  # Webhook mode: no polling to stall
         idle = time.monotonic() - last_activity
         if idle > WATCHDOG_TIMEOUT:
             log.error("watchdog_triggered", idle_seconds=int(idle))
@@ -732,8 +756,8 @@ def create_app(config: Config) -> Application:
     app = (
         Application.builder()
         .token(config.telegram_token)
-        .read_timeout(15)
-        .write_timeout(15)
+        .read_timeout(30)
+        .write_timeout(30)
         .connect_timeout(15)
         .pool_timeout(15)
         .build()
@@ -757,7 +781,7 @@ def create_app(config: Config) -> Application:
     )
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.VIDEO_NOTE | filters.VIDEO, handle_video))
-    app.add_handler(MessageHandler(filters.PHOTO & ~filters.CAPTION, handle_photo))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Schedule daily quote
     if app.job_queue is not None:
