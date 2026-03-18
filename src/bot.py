@@ -683,7 +683,15 @@ def create_app(config: Config) -> Application:
         store.save()
         log.info("shutdown_save_complete")
 
-    app = Application.builder().token(config.telegram_token).build()
+    app = (
+        Application.builder()
+        .token(config.telegram_token)
+        .read_timeout(15)
+        .write_timeout(15)
+        .connect_timeout(15)
+        .pool_timeout(15)
+        .build()
+    )
     app.add_error_handler(on_error)
     app.post_shutdown = on_shutdown
     app.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))

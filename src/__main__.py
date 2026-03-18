@@ -36,10 +36,6 @@ def main() -> None:
         drop_pending_updates=True,
         poll_interval=1.0,
         timeout=30,
-        read_timeout=15,
-        write_timeout=15,
-        connect_timeout=15,
-        pool_timeout=15,
     )
 
 
