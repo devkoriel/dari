@@ -45,7 +45,7 @@ def main() -> None:
             webhook_url=full_url,
             allowed_updates=ALLOWED_UPDATES,
             drop_pending_updates=True,
-            secret_token=config.telegram_token[:32],
+            secret_token=config.telegram_token.replace(":", "_")[:32],
         )
     else:
         log.info("polling_mode")
