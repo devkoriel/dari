@@ -338,6 +338,18 @@ class TestCleanResponse:
         raw = "첫째 줄\n둘째 줄\n第一行\n第二行"
         assert Translator._clean_response(raw, original=original) == "第一行\n第二行"
 
+    def test_clean_strips_echoed_whitespace_variation(self):
+        """Echo with different whitespace should still be stripped."""
+        original = "나중에 한국오면 알거야"
+        raw = "나중에 한국 오면 알거야\n\n나중에 한국 오면 알거야\n\n以後來韓國就知道啦"
+        assert Translator._clean_response(raw, original=original) == "以後來韓國就知道啦"
+
+    def test_clean_strips_partial_echo(self):
+        """Partial echo (substring of original) should be stripped."""
+        original = "나중에 한국 와보면 알거야"
+        raw = "나중에\n以後來韓國看看就知道了"
+        assert Translator._clean_response(raw, original=original) == "以後來韓國看看就知道了"
+
     def test_clean_no_strip_without_original(self):
         raw = "그렇지 못한 사람도 많거든\n也有很多人做不到呢"
         assert Translator._clean_response(raw) == "그렇지 못한 사람도 많거든\n也有很多人做不到呢"

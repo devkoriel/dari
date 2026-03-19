@@ -447,13 +447,16 @@ class Translator:
             "here is",
         )
 
-        # Build set of original lines for echo detection
+        # Build set of original lines for echo detection (whitespace-stripped)
         original_lines: set[str] = set()
+        original_nospace = ""
         if original:
+            original_nospace = original.replace(" ", "")
             for ol in original.strip().split("\n"):
                 ol_stripped = ol.strip()
                 if ol_stripped:
                     original_lines.add(ol_stripped)
+                    original_lines.add(ol_stripped.replace(" ", ""))
 
         lines = text.split("\n")
         cleaned = []
@@ -484,10 +487,16 @@ class Translator:
                 if any(m in lower for m in english_markers) and len(stripped) < 100:
                     log.warning("leaked_english_reasoning", line=stripped[:100])
                     continue
-            # Strip echoed original text
-            if original_lines and stripped in original_lines:
-                log.warning("echoed_original_stripped", line=stripped[:100])
-                continue
+            # Strip echoed original text (exact or space-insensitive match)
+            if original_lines:
+                nospace = stripped.replace(" ", "")
+                if stripped in original_lines or nospace in original_lines:
+                    log.warning("echoed_original_stripped", line=stripped[:100])
+                    continue
+                # Catch partial echoes: response line is a substring of original
+                if original_nospace and len(nospace) >= 2 and nospace in original_nospace:
+                    log.warning("echoed_partial_stripped", line=stripped[:100])
+                    continue
             # Strip "translation:" prefix from first real line
             strip_prefixes = ("translation:", "here is the translation:", "the translation is:")
             for prefix in strip_prefixes:
