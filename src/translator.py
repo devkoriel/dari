@@ -473,7 +473,9 @@ class Translator:
             if not response.content:
                 return None
             raw = response.content[0].text.strip()
-            return self._clean_response(raw)
+            # Pass target_lang="en" to avoid stripping legitimate English
+            # explanations from /say and /teach structured output
+            return self._clean_response(raw, target_lang="en")
         except Exception:
             self.stats["errors"] += 1
             log.exception("ask_claude_failed")
@@ -579,7 +581,6 @@ class Translator:
         if quick is not None:
             return quick
 
-        self.stats["api_calls"] += 1
         messages = self._build_messages(chat_id, text, target_lang, sender_name)
 
         # Scale max_tokens to input length
@@ -596,6 +597,7 @@ class Translator:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
+                self.stats["api_calls"] += 1
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=max_tokens,
@@ -642,7 +644,6 @@ class Translator:
         if quick is not None:
             return (quick, None)
 
-        self.stats["api_calls"] += 1
         messages = self._build_messages(chat_id, text, target_lang, sender_name)
         max_tokens = min(4096, max(80, len(text) * 3))
 
@@ -656,6 +657,7 @@ class Translator:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
+                self.stats["api_calls"] += 1
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=max_tokens,
