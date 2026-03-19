@@ -376,6 +376,54 @@ class TestCleanResponse:
         raw = "Actually, the translation should be:\n想你了"
         assert Translator._clean_response(raw) == "想你了"
 
+    def test_clean_empty_after_all_lines_stripped(self):
+        """When all lines are leaked reasoning, return empty string."""
+        raw = "Wait, let me think about this\nActually, I need to reconsider"
+        result = Translator._clean_response(raw)
+        assert result == ""
+
+    def test_clean_translate_keyword_not_stripped_without_context(self):
+        """'translate' keyword should not strip lines from /say output (no original or target_lang)."""
+        raw = "Translation: 想你了\nPronunciation: xiǎng nǐ le"
+        result = Translator._clean_response(raw)
+        assert "想你了" in result
+        assert "Pronunciation" in result
+
+    def test_clean_translate_keyword_stripped_with_context(self):
+        """'translate' keyword should strip leaked lines when translation context is present."""
+        raw = "I'll translate this for you\n想你了"
+        result = Translator._clean_response(raw, original="보고싶어", target_lang="zh-TW")
+        assert result == "想你了"
+
+
+class TestImageTranslation:
+    @pytest.mark.asyncio
+    async def test_translate_image_returns_none_for_no_text(self):
+        """translate_image should return None when Claude says 'No text found'."""
+        t = Translator(api_key="test", model="test-model")
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="No text found.")]
+
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(return_value=mock_response)
+            result = await t.translate_image(b"fake_image", "image/jpeg", "ko")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_translate_image_returns_text_when_found(self):
+        """translate_image should return cleaned text when image has text."""
+        t = Translator(api_key="test", model="test-model")
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="📷 你好\n→ 안녕")]
+
+        with patch.object(t._client, "messages") as mock_messages:
+            mock_messages.create = AsyncMock(return_value=mock_response)
+            result = await t.translate_image(b"fake_image", "image/jpeg", "ko")
+
+        assert result is not None
+        assert "안녕" in result
+
 
 class TestStats:
     def test_initial_stats(self):

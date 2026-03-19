@@ -135,7 +135,7 @@ class TestHandleMessage:
             with patch("src.bot.Translator.is_same_language", return_value=False):
                 await handler.callback(update, MagicMock())
 
-        update.message.reply_text.assert_called_once_with("⚠️ hello", reply_to_message_id=42)
+        update.message.reply_text.assert_called_once_with("⚠️ Translation failed", reply_to_message_id=42)
 
     @pytest.mark.asyncio
     async def test_skips_same_language(self, config):

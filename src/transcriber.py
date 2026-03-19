@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import structlog
 
 log = structlog.get_logger()
 
 GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+MAX_RETRIES = 2
+RETRY_BACKOFF = 1.0
 
 
 class Transcriber:
@@ -35,18 +39,23 @@ class Transcriber:
         if not self._enabled:
             return None
 
-        try:
-            client = self._get_client()
-            response = await client.post(
-                GROQ_WHISPER_URL,
-                files={"file": (filename, audio_bytes, "application/octet-stream")},
-                data={"model": "whisper-large-v3-turbo", "response_format": "text"},
-            )
-            response.raise_for_status()
-            text = response.text.strip()
-            if not text:
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                client = self._get_client()
+                response = await client.post(
+                    GROQ_WHISPER_URL,
+                    files={"file": (filename, audio_bytes, "application/octet-stream")},
+                    data={"model": "whisper-large-v3-turbo", "response_format": "text"},
+                )
+                response.raise_for_status()
+                text = response.text.strip()
+                if not text:
+                    return None
+                return text
+            except Exception:
+                if attempt < MAX_RETRIES:
+                    log.warning("transcription_retry", attempt=attempt + 1)
+                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    continue
+                log.exception("transcription_failed")
                 return None
-            return text
-        except Exception:
-            log.exception("transcription_failed")
-            return None

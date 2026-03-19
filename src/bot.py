@@ -415,6 +415,30 @@ def create_app(config: Config) -> Application:
             except Exception:
                 log.exception("failed_to_notify_admin")
 
+    def _track_message_stats(user_id: str, sender_name: str) -> None:
+        """Track per-user stats, first-today, and periodic save."""
+        translator.stats["messages"] += 1
+
+        us = store.get("user_stats", user_id) or {"name": sender_name, "count": 0}
+        us["name"] = sender_name
+        us["count"] = us.get("count", 0) + 1
+        store.set("user_stats", user_id, us)
+
+        today = datetime.date.today().isoformat()
+        existing_first = store.get("first_today", "value")
+        if not existing_first or existing_first.get("date") != today:
+            store.set(
+                "first_today",
+                "value",
+                {
+                    "date": today,
+                    "who": f"{sender_name} at {datetime.datetime.now(KST).strftime('%H:%M')}",
+                },
+            )
+
+        if translator.stats["messages"] % 10 == 0:
+            store.save()
+
     async def _translate_and_reply(
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
@@ -437,28 +461,7 @@ def create_app(config: Config) -> Application:
             log.debug("skipped_same_language", sender=sender_name, target=target_lang)
             return
 
-        translator.stats["messages"] += 1
-
-        # Track per-user stats
-        us = store.get("user_stats", user_id) or {"name": sender_name, "count": 0}
-        us["name"] = sender_name
-        us["count"] = us.get("count", 0) + 1
-        store.set("user_stats", user_id, us)
-
-        today = datetime.date.today().isoformat()
-        existing_first = store.get("first_today", "value")
-        if not existing_first or existing_first.get("date") != today:
-            store.set(
-                "first_today",
-                "value",
-                {
-                    "date": today,
-                    "who": f"{sender_name} at {datetime.datetime.now(KST).strftime('%H:%M')}",
-                },
-            )
-
-        if translator.stats["messages"] % 10 == 0:
-            store.save()
+        _track_message_stats(user_id, sender_name)
 
         learn_on = store.get("learn_mode", user_id, False)
         pronunciation = None
@@ -473,7 +476,7 @@ def create_app(config: Config) -> Application:
             consecutive_errors += 1
             if consecutive_errors >= ERROR_NOTIFY_THRESHOLD:
                 await _notify_admin_on_errors(context)
-            await _send_reply(update.message, f"⚠️ {text}", update.message.message_id)
+            await _send_reply(update.message, "⚠️ Translation failed", update.message.message_id)
             return
 
         consecutive_errors = 0
@@ -521,14 +524,30 @@ def create_app(config: Config) -> Application:
         await _translate_and_reply(update, context, chat_id, user_id, sender_name, text)
 
     async def _send_reply(message, text: str, reply_to: int | None = None) -> None:
-        """Send a reply, splitting into chunks if needed for Telegram's 4096 char limit."""
+        """Send a reply, splitting at newline boundaries for Telegram's 4096 char limit."""
         if len(text) <= 4096:
             await message.reply_text(text, reply_to_message_id=reply_to)
-        else:
-            for i in range(0, len(text), 4096):
-                chunk = text[i : i + 4096]
-                mid = reply_to if i == 0 else None
-                await message.reply_text(chunk, reply_to_message_id=mid)
+            return
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        for line in text.split("\n"):
+            # +1 for the newline separator
+            added_len = len(line) + (1 if current else 0)
+            if current_len + added_len > 4096 and current:
+                chunks.append("\n".join(current))
+                current = [line]
+                current_len = len(line)
+            else:
+                current.append(line)
+                current_len += added_len
+        if current:
+            chunks.append("\n".join(current))
+
+        for i, chunk in enumerate(chunks):
+            mid = reply_to if i == 0 else None
+            await message.reply_text(chunk, reply_to_message_id=mid)
 
     async def _transcribe_and_reply(
         update: Update,
@@ -570,12 +589,7 @@ def create_app(config: Config) -> Application:
             await _send_reply(message, f"{icon} {text}", message.message_id)
             return
 
-        translator.stats["messages"] += 1
-
-        us = store.get("user_stats", user_id) or {"name": sender_name, "count": 0}
-        us["name"] = sender_name
-        us["count"] = us.get("count", 0) + 1
-        store.set("user_stats", user_id, us)
+        _track_message_stats(user_id, sender_name)
 
         learn_on = store.get("learn_mode", user_id, False)
         pronunciation = None
@@ -674,9 +688,8 @@ def create_app(config: Config) -> Application:
         async with semaphore:
             result = await translator.translate_image(bytes(image_bytes), "image/jpeg", target_lang)
 
-        if result:
+        if result is not None:
             await message.reply_text(result, reply_to_message_id=message.message_id)
-            # Add image translation to conversation context for follow-up messages
             sender_name = message.from_user.first_name or "Unknown"
             translator.add_message(
                 chat_id=message.chat.id,
@@ -703,11 +716,9 @@ def create_app(config: Config) -> Application:
             except Exception:
                 log.warning("daily_quote_send_failed", user_id=uid)
 
-    # --- Watchdog: force exit if polling stalls (disabled in webhook mode) ---
+    # --- Watchdog: force exit if polling stalls (polling mode only) ---
 
     async def watchdog_check(context: CallbackContext) -> None:
-        if config.webhook_url:
-            return  # Webhook mode: no polling to stall
         idle = time.monotonic() - last_activity
         if idle > WATCHDOG_TIMEOUT:
             log.error("watchdog_triggered", idle_seconds=int(idle))
@@ -764,8 +775,9 @@ def create_app(config: Config) -> Application:
             tzinfo=KST,
         )
         app.job_queue.run_daily(send_daily_quote, time=quote_time)
-        app.job_queue.run_repeating(watchdog_check, interval=300, first=300)
         log.info("daily_quote_scheduled", time=quote_time.isoformat())
-        log.info("watchdog_enabled", timeout_seconds=WATCHDOG_TIMEOUT)
+        if not config.webhook_url:
+            app.job_queue.run_repeating(watchdog_check, interval=300, first=300)
+            log.info("watchdog_enabled", timeout_seconds=WATCHDOG_TIMEOUT)
 
     return app

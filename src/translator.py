@@ -359,8 +359,15 @@ class Translator:
         return [{"role": "user", "content": user_content}]
 
     async def translate_image(self, image_bytes: bytes, media_type: str, target_lang: str) -> str | None:
+        """Extract text from image and translate. Returns None if no text found."""
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         b64_data = base64.b64encode(image_bytes).decode()
+
+        image_system = (
+            "You extract text from images and translate it. "
+            "CONTEXT: Casual couple's chat between Jinsoo (Korean) and 敏甄 (Traditional Chinese). "
+            "Korean: always 반말. Chinese: casual Taiwanese Mandarin, Traditional Chinese (繁體中文) only."
+        )
 
         for attempt in range(MAX_RETRIES + 1):
             try:
@@ -368,6 +375,7 @@ class Translator:
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=512,
+                    system=image_system,
                     messages=[
                         {
                             "role": "user",
@@ -385,7 +393,7 @@ class Translator:
                                     "text": (
                                         f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
                                         "Format:\n📷 [original text]\n→ [translation]\n\n"
-                                        "If no text found, reply: No text found."
+                                        "If there is NO text in the image, reply ONLY: No text found."
                                     ),
                                 },
                             ],
@@ -394,7 +402,12 @@ class Translator:
                 )
                 if not response.content:
                     return None
-                return response.content[0].text.strip()
+                raw = response.content[0].text.strip()
+                # Silent skip when no text detected in image
+                if raw.lower().startswith("no text found"):
+                    log.debug("image_no_text", response=raw[:100])
+                    return None
+                return self._clean_response(raw)
             except Exception:
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
@@ -414,7 +427,8 @@ class Translator:
             )
             if not response.content:
                 return None
-            return response.content[0].text.strip()
+            raw = response.content[0].text.strip()
+            return self._clean_response(raw)
         except Exception:
             self.stats["errors"] += 1
             log.exception("ask_claude_failed")
@@ -469,7 +483,7 @@ class Translator:
             if any(lower.startswith(m) for m in leak_markers):
                 log.warning("leaked_reasoning_stripped", line=stripped[:100])
                 continue
-            if "translate" in lower and len(stripped) < 80:
+            if "translate" in lower and len(stripped) < 80 and (original or target_lang):
                 continue
             # Catch English reasoning lines — skip when target IS English to avoid
             # stripping legitimate translations like "This would be great"
@@ -512,7 +526,7 @@ class Translator:
         while cleaned and not cleaned[-1]:
             cleaned.pop()
 
-        return "\n".join(cleaned) if cleaned else text
+        return "\n".join(cleaned)
 
     async def translate(self, chat_id: int, text: str, target_lang: str, sender_name: str = "") -> str | None:
         # Try instant phrase lookup first
@@ -612,14 +626,17 @@ class Translator:
 
                 raw = response.content[0].text.strip()
 
-                # Extract pronunciation from the last line if it starts with "PRONUNCIATION:"
+                # Extract pronunciation: search backwards for PRONUNCIATION: line
                 pronunciation = None
-                lines = raw.rsplit("\n", 1)
-                if len(lines) == 2:
-                    last_line = lines[1].strip()
-                    if last_line.upper().startswith("PRONUNCIATION:"):
-                        pronunciation = last_line[len("PRONUNCIATION:") :].strip()
-                        raw = lines[0]  # Remove pronunciation line from translation
+                raw_lines = raw.rstrip().split("\n")
+                for i in range(len(raw_lines) - 1, -1, -1):
+                    candidate = raw_lines[i].strip()
+                    if not candidate:
+                        continue  # Skip trailing blank lines
+                    if candidate.upper().startswith("PRONUNCIATION:"):
+                        pronunciation = candidate[len("PRONUNCIATION:") :].strip()
+                        raw = "\n".join(raw_lines[:i])
+                    break  # Only check the last non-blank line
 
                 translation = self._clean_response(raw, original=text, target_lang=target_lang)
                 if not translation:
