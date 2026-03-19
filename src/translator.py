@@ -363,8 +363,17 @@ class Translator:
         lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
         b64_data = base64.b64encode(image_bytes).decode()
 
+        # Determine the "other" language for same-language fallback
+        other_langs = {
+            "ko": "Traditional Chinese (繁體中文)",
+            "zh-TW": "Korean (한국어)",
+            "en": "Korean (한국어) and Traditional Chinese (繁體中文)",
+        }
+        other_lang_hint = other_langs.get(target_lang, lang_name)
+
         image_system = (
-            "You extract text from images and translate it. "
+            "You extract text from images and translate it. Output ONLY the extraction and translation. "
+            "NEVER add commentary, descriptions, explanations, or notes in parentheses. "
             "CONTEXT: Casual couple's chat between Jinsoo (Korean) and 敏甄 (Traditional Chinese). "
             "Korean: always 반말. Chinese: casual Taiwanese Mandarin, Traditional Chinese (繁體中文) only."
         )
@@ -391,9 +400,11 @@ class Translator:
                                 {
                                     "type": "text",
                                     "text": (
-                                        f"Extract ALL text from this image. Then translate it to {lang_name}.\n\n"
+                                        f"Extract ALL text from this image. Then translate it to {lang_name}.\n"
+                                        f"If the text is ALREADY in {lang_name}, translate to {other_lang_hint} instead.\n\n"
                                         "Format:\n📷 [original text]\n→ [translation]\n\n"
-                                        "If there is NO text in the image, reply ONLY: No text found."
+                                        "If there is NO text in the image, reply ONLY: No text found.\n"
+                                        "Do NOT add any commentary, descriptions, or notes about the image."
                                     ),
                                 },
                             ],
@@ -407,7 +418,7 @@ class Translator:
                 if raw.lower().startswith("no text found"):
                     log.debug("image_no_text", response=raw[:100])
                     return None
-                return self._clean_response(raw)
+                return self._clean_image_response(raw)
             except Exception:
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
@@ -415,6 +426,40 @@ class Translator:
                 self.stats["errors"] += 1
                 log.exception("image_translation_failed")
                 return None
+
+    @staticmethod
+    def _clean_image_response(raw: str) -> str | None:
+        """Strip meta-commentary from image translation responses."""
+        lines = raw.split("\n")
+        cleaned = []
+        for line in lines:
+            stripped = line.strip()
+            # Remove parenthetical commentary lines
+            if stripped.startswith("(") and stripped.endswith(")"):
+                continue
+            # Remove lines that are clearly meta-commentary
+            lower = stripped.lower()
+            if any(
+                lower.startswith(m)
+                for m in (
+                    "note:",
+                    "this text",
+                    "this appears",
+                    "this is ",
+                    "the text ",
+                    "also visible",
+                    "i can see",
+                )
+            ):
+                continue
+            cleaned.append(line)
+        # Strip trailing empty lines
+        while cleaned and not cleaned[-1].strip():
+            cleaned.pop()
+        while cleaned and not cleaned[0].strip():
+            cleaned.pop(0)
+        result = "\n".join(cleaned).strip()
+        return result or None
 
     async def ask_claude(self, system: str, user_msg: str, max_tokens: int = 512) -> str | None:
         self.stats["api_calls"] += 1

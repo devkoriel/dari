@@ -425,6 +425,30 @@ class TestImageTranslation:
         assert "안녕" in result
 
 
+class TestCleanImageResponse:
+    def test_strips_parenthetical_commentary(self):
+        raw = "📷 微笑和哭泣\n→ 미소와 울음\n\n(This text appears on the karaoke screen)"
+        result = Translator._clean_image_response(raw)
+        assert "karaoke" not in result
+        assert "미소와 울음" in result
+
+    def test_strips_meta_notes(self):
+        raw = "📷 我是4國貓咪\n→ 나는 4개국 고양이\n\nAlso visible at bottom: Address in Taiwan"
+        result = Translator._clean_image_response(raw)
+        assert "Also visible" not in result
+        assert "고양이" in result
+
+    def test_returns_none_for_empty(self):
+        raw = "(This is just a description of the image)"
+        result = Translator._clean_image_response(raw)
+        assert result is None
+
+    def test_preserves_valid_content(self):
+        raw = "📷 NORAEBANG\n→ 노래방"
+        result = Translator._clean_image_response(raw)
+        assert result == "📷 NORAEBANG\n→ 노래방"
+
+
 class TestStats:
     def test_initial_stats(self):
         t = Translator(api_key="test", model="test-model")
