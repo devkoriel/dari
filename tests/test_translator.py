@@ -395,6 +395,40 @@ class TestCleanResponse:
         result = Translator._clean_response(raw, original="보고싶어", target_lang="zh-TW")
         assert result == "想你了"
 
+    def test_clean_strips_echo_with_added_punctuation(self):
+        """Echo with trailing punctuation added by Claude should be stripped."""
+        original = "엥 향기 나"
+        raw = "엥 향기 나?\n你身上有香味耶"
+        result = Translator._clean_response(raw, original=original, target_lang="zh-TW")
+        assert result == "你身上有香味耶"
+
+    def test_clean_strips_echo_with_various_punctuation(self):
+        """Echo with various trailing punctuation marks should be stripped."""
+        original = "밥 먹었어"
+        for punct in ["?", "!", ".", "？", "！", "。", "~", "～"]:
+            raw = f"밥 먹었어{punct}\n吃飯了嗎"
+            result = Translator._clean_response(raw, original=original, target_lang="zh-TW")
+            assert result == "吃飯了嗎", f"Failed for punctuation: {punct}"
+
+    def test_clean_strips_english_line_from_mixed_response(self):
+        """English lines should be stripped when target is not English."""
+        raw = "你身上有香味耶\nYou smell good!"
+        result = Translator._clean_response(raw, target_lang="zh-TW")
+        assert result == "你身上有香味耶"
+
+    def test_clean_keeps_english_when_target_is_english(self):
+        """English lines should be preserved when target IS English."""
+        raw = "You smell good!"
+        result = Translator._clean_response(raw, target_lang="en")
+        assert result == "You smell good!"
+
+    def test_clean_keeps_single_line_even_if_all_english(self):
+        """Single-line English response should NOT be stripped (no fallback content)."""
+        raw = "You smell good!"
+        result = Translator._clean_response(raw, target_lang="zh-TW")
+        # Single line — no non-English alternative, so keep it
+        assert result == "You smell good!"
+
 
 class TestImageTranslation:
     @pytest.mark.asyncio

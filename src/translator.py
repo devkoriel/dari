@@ -28,7 +28,7 @@ ABSOLUTE RULES:
 2. NEVER output the original text. NEVER repeat the input. NEVER add quotation marks.
 3. ONE translation only. Do NOT provide multiple versions or revise your answer mid-response.
 4. PRESERVE the original formatting: line breaks, paragraphs, bullet points, structure. Translate everything.
-5. NEVER write in English unless the target language IS English. No English reasoning, no English notes.
+5. NEVER write in English unless the target language IS English. No English reasoning, no English notes. If target is Korean, output Korean ONLY. If target is Traditional Chinese, output Traditional Chinese ONLY.
 
 CONTEXT USAGE:
 - You receive recent conversation history for tone and flow ONLY.
@@ -548,15 +548,24 @@ class Translator:
                 if any(m in lower for m in english_markers) and len(stripped) < 100:
                     log.warning("leaked_english_reasoning", line=stripped[:100])
                     continue
-            # Strip echoed original text (exact or space-insensitive match)
+            # Strip echoed original text (exact, space-insensitive, or punctuation-insensitive match)
             if original_lines:
                 nospace = stripped.replace(" ", "")
+                # Also strip trailing punctuation for fuzzy echo detection
+                _punct = "?!.。？！~～,，"
+                nospace_nopunct = nospace.rstrip(_punct)
                 if stripped in original_lines or nospace in original_lines:
                     log.warning("echoed_original_stripped", line=stripped[:100])
+                    continue
+                if nospace_nopunct and nospace_nopunct in original_lines:
+                    log.warning("echoed_original_punct_stripped", line=stripped[:100])
                     continue
                 # Catch partial echoes: response line is a substring of original
                 if original_nospace and len(nospace) >= 2 and nospace in original_nospace:
                     log.warning("echoed_partial_stripped", line=stripped[:100])
+                    continue
+                if original_nospace and len(nospace_nopunct) >= 2 and nospace_nopunct in original_nospace:
+                    log.warning("echoed_partial_punct_stripped", line=stripped[:100])
                     continue
             # Strip "translation:" prefix from first real line
             strip_prefixes = ("translation:", "here is the translation:", "the translation is:")
@@ -572,6 +581,23 @@ class Translator:
             cleaned.pop(0)
         while cleaned and not cleaned[-1]:
             cleaned.pop()
+
+        # If target is not English, strip lines that are purely English/ASCII
+        # (Claude sometimes leaks English translations alongside the target)
+        if target_lang and target_lang != "en" and len(cleaned) > 1:
+            non_english = []
+            for cl in cleaned:
+                if not cl:
+                    non_english.append(cl)
+                    continue
+                # Check if line is purely ASCII (English)
+                if all(ord(c) < 0x80 or unicodedata.category(c).startswith("P") for c in cl.replace(" ", "")):
+                    log.warning("stripped_english_line", line=cl[:100])
+                    continue
+                non_english.append(cl)
+            # Only use filtered result if we still have content
+            if any(line.strip() for line in non_english):
+                cleaned = non_english
 
         return "\n".join(cleaned)
 
