@@ -25,7 +25,7 @@ class TestLoadConfig:
             assert cfg.anthropic_api_key == "test-key"
             assert cfg.admin_user_id == "111"
             assert cfg.user_map == {"111": "zh-TW", "222": "ko"}
-            assert cfg.claude_model == "claude-haiku-4-5-20251001"
+            assert cfg.claude_model == "claude-sonnet-4-6-20250514"
 
     def test_custom_model(self):
         with patch.dict(os.environ, _env(CLAUDE_MODEL="claude-sonnet-4-5-20250514"), clear=True):
