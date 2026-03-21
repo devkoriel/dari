@@ -21,29 +21,40 @@ LANGUAGE_NAMES = {
     "en": "English",
 }
 
-SYSTEM_PROMPT = """You are a translation engine. You receive a message and output ONLY its translation. Nothing else.
+SYSTEM_PROMPT = """You are a real-time translation engine for an intimate couple's chat. Output ONLY the translation — nothing else.
 
 ABSOLUTE RULES:
 1. Output ONLY the translated text. ZERO other words. No thinking, no alternatives, no explanations, no meta-commentary.
 2. NEVER output the original text. NEVER repeat the input. NEVER add quotation marks.
 3. ONE translation only. Do NOT provide multiple versions or revise your answer mid-response.
-4. PRESERVE the original formatting: line breaks, paragraphs, bullet points, structure. Translate everything.
-5. NEVER write in English unless the target language IS English. No English reasoning, no English notes. If target is Korean, output Korean ONLY. If target is Traditional Chinese, output Traditional Chinese ONLY.
+4. PRESERVE the original formatting: line breaks, paragraphs, bullet points, structure.
+5. Output ONLY in the target language. Never mix in English or the source language.
+
+WHO'S CHATTING:
+- Jinsoo (진수) — Korean speaker, boyfriend
+- 敏甄 (Minzhen) — Traditional Chinese speaker, girlfriend
+- They are a romantic couple in a long-distance relationship (Korea ↔ Taiwan)
+
+TONE & STYLE:
+- Intimate, warm, casual — like texting your partner, not a textbook.
+- Korean: ALWAYS 반말 (보고싶어, 뭐해, 고마워). NEVER 존댓말 (보고싶습니다, 감사합니다).
+- Chinese: casual spoken Taiwanese Mandarin (謝啦 not 謝謝您, 想你了 not 我想念你, 吃飯了嗎 not 您用餐了嗎). Drop 你 when natural.
+- Traditional Chinese (繁體中文) ONLY. Never Simplified Chinese.
+- Match the emotional energy exactly: cute→cute, playful→playful, whiny→whiny, flirty→flirty.
+- Short messages get short translations. 고마워! → 謝啦！(not 非常感謝你！)
+- Preserve onomatopoeia feel: ㅋㅋㅋ→哈哈哈, ㅎㅎ→呵呵, ㅠㅠ→嗚嗚, 哈哈→ㅋㅋ, 嗚嗚→ㅠㅠ
+
+SPECIAL CASES:
+- Konglish (Korean-transliterated English like 굿모오닝, 오케이, 하이): translate the MEANING, not the sound. 굿모오닝→早安, 오케이→好.
+- Internet slang & abbreviations: translate naturally. ㄱㅅ→謝啦, ㅇㅋ→好, ㅇㅈ→認同, ㅁㅊ→瘋了.
+- Proper nouns, brand names, song titles: keep as-is in the translation.
+- Single-word reactions (헐, 대박, 天啊): translate to the equivalent reaction in target language.
+- When a message mixes languages (e.g., Korean + English), translate ALL of it to the target language.
 
 CONTEXT USAGE:
-- You receive recent conversation history for tone and flow ONLY.
-- ALWAYS translate the CURRENT message based on its own meaning first. Context helps with ambiguity, NOT to override the literal meaning.
-- Example: if context mentions "work hard" but the current message says "it's working now", translate as "functioning/running" NOT "laboring". The current message stands on its own.
-
-CONTEXT: This is a casual couple's chat between Jinsoo (Korean) and 敏甄 (Traditional Chinese/繁體中文).
-
-TONE:
-- This is an intimate couple — use casual, warm language. NEVER use formal/polite forms.
-- Korean: always use 반말 (e.g., 보고싶어, 뭐해, 고마워). Never 존댓말.
-- Chinese: use casual spoken Taiwanese Mandarin (e.g., 謝啦 not 謝謝您, 想你了 not 我想念你). Drop 你 when natural.
-- Traditional Chinese (繁體中文) ONLY. Never Simplified.
-- Match emotional energy: cute→cute, playful→playful, ㅋㅋ→哈哈, ㅠㅠ→嗚嗚, 哈哈哈→ㅋㅋㅋ
-- Short messages get short translations. 고마워! → 謝啦！ not 非常感謝你！"""
+- You receive recent conversation history to understand tone and flow.
+- ALWAYS translate the CURRENT message based on its own meaning. Context helps with ambiguity only.
+- Example: if context mentions "work hard" but the current message says "it's working now", translate as "functioning/running" NOT "laboring"."""
 
 LEARN_SYSTEM_PROMPT = """You are a translation engine with pronunciation. You receive a message and output the translation AND pronunciation.
 
@@ -74,20 +85,7 @@ LANG_LABELS = {
 # Instant lookup table for common phrases — no API call needed.
 # key: (normalized_text, target_lang) → translation (without flag prefix)
 PHRASE_TABLE: dict[tuple[str, str], str] = {
-    # Korean → Chinese
-    ("ㅋㅋ", "zh-TW"): "哈哈",
-    ("ㅋㅋㅋ", "zh-TW"): "哈哈哈",
-    ("ㅋㅋㅋㅋ", "zh-TW"): "哈哈哈哈",
-    ("ㅋㅋㅋㅋㅋ", "zh-TW"): "哈哈哈哈哈",
-    ("ㅠㅠ", "zh-TW"): "嗚嗚",
-    ("ㅠㅠㅠ", "zh-TW"): "嗚嗚嗚",
-    ("ㅎㅎ", "zh-TW"): "呵呵",
-    ("ㅎㅎㅎ", "zh-TW"): "呵呵呵",
-    ("ㄱㅅ", "zh-TW"): "謝啦",
-    ("ㄴㄴ", "zh-TW"): "不不",
-    ("ㅇㅇ", "zh-TW"): "嗯嗯",
-    ("ㅇㅋ", "zh-TW"): "好",
-    ("ㄷㄷ", "zh-TW"): "抖抖",
+    # Korean → Chinese (common couple phrases)
     ("고마워", "zh-TW"): "謝啦",
     ("고마워!", "zh-TW"): "謝啦！",
     ("고마워요", "zh-TW"): "謝謝",
@@ -113,19 +111,23 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
     ("진짜", "zh-TW"): "真的",
     ("대박", "zh-TW"): "太厲害了",
     ("대박!", "zh-TW"): "太厲害了！",
-    ("아하", "zh-TW"): "啊哈",
-    ("ㅇㅈ", "zh-TW"): "認同",
-    ("ㅁㅊ", "zh-TW"): "瘋了",
     ("귀여워", "zh-TW"): "好可愛",
     ("귀여워!", "zh-TW"): "好可愛！",
     ("화이팅", "zh-TW"): "加油",
     ("화이팅!", "zh-TW"): "加油！",
     ("아이고", "zh-TW"): "唉呀",
     ("헐", "zh-TW"): "天啊",
+    # Konglish → Chinese
+    ("굿모닝", "zh-TW"): "早安",
+    ("굿모오닝", "zh-TW"): "早安",
+    ("굿나잇", "zh-TW"): "晚安",
+    ("오케이", "zh-TW"): "好",
+    ("하이", "zh-TW"): "嗨",
+    ("바이", "zh-TW"): "掰掰",
+    ("바이바이", "zh-TW"): "掰掰",
+    ("땡큐", "zh-TW"): "謝啦",
+    ("노노", "zh-TW"): "不不",
     # Korean → English
-    ("ㅋㅋ", "en"): "haha",
-    ("ㅋㅋㅋ", "en"): "hahaha",
-    ("ㅠㅠ", "en"): "T_T",
     ("고마워", "en"): "thanks",
     ("사랑해", "en"): "I love you",
     # Chinese → Korean
@@ -172,6 +174,8 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
     ("哦", "ko"): "아",
     ("喔", "ko"): "아",
     ("啊哈", "ko"): "아하",
+    ("掰掰", "ko"): "바이바이",
+    ("嗨", "ko"): "하이",
     # Chinese → English
     ("哈哈", "en"): "haha",
     ("哈哈哈", "en"): "hahaha",
@@ -184,6 +188,8 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
     ("haha", "ko"): "ㅋㅋ",
     ("thanks", "ko"): "고마워",
     ("thank you", "ko"): "고마워",
+    ("good morning", "ko"): "굿모닝",
+    ("good night", "ko"): "잘자",
     # English → Chinese
     ("ok", "zh-TW"): "好",
     ("okay", "zh-TW"): "好",
@@ -191,6 +197,8 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
     ("haha", "zh-TW"): "哈哈",
     ("thanks", "zh-TW"): "謝啦",
     ("thank you", "zh-TW"): "謝謝",
+    ("good morning", "zh-TW"): "早安",
+    ("good night", "zh-TW"): "晚安",
 }
 
 
@@ -387,10 +395,9 @@ class Translator:
 
         context_block = "\n".join(context_lines) if context_lines else "(no prior messages)"
 
-        sender_info = f" (from {sender_name})" if sender_name else ""
+        sender_info = f" from {sender_name}" if sender_name else ""
         user_content = (
-            f"Recent conversation:\n{context_block}\n\n"
-            f"Translate the following message{sender_info} to {lang_name}:\n{text}"
+            f"Recent conversation:\n{context_block}\n\n[Message{sender_info}] Translate to {lang_name}:\n{text}"
         )
         return [{"role": "user", "content": user_content}]
 

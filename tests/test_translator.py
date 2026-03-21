@@ -208,9 +208,14 @@ class TestShouldSkip:
 class TestPhraseLookup:
     def test_korean_to_chinese(self):
         t = Translator(api_key="test", model="test-model")
-        result = t.lookup_phrase("ㅋㅋㅋ", "zh-TW")
-        assert result == "🇰🇷 哈哈哈"
+        result = t.lookup_phrase("고마워", "zh-TW")
+        assert result == "🇰🇷 謝啦"
         assert t.stats["phrase_hits"] == 1
+
+    def test_konglish_to_chinese(self):
+        t = Translator(api_key="test", model="test-model")
+        result = t.lookup_phrase("굿모오닝", "zh-TW")
+        assert result == "🇰🇷 早安"
 
     def test_chinese_to_korean(self):
         t = Translator(api_key="test", model="test-model")
