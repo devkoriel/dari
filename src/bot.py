@@ -479,6 +479,10 @@ def create_app(config: Config) -> Application:
             await _send_reply(update.message, "⚠️ Translation failed", update.message.message_id)
             return
 
+        if not translation:
+            # Empty after cleaning (echo-only) — silently skip, not an error
+            return
+
         consecutive_errors = 0
         error_notified = False
 
@@ -710,11 +714,23 @@ def create_app(config: Config) -> Application:
         quote = random_quote()
         vocab = random_vocabulary()
         text = f"{quote}\n\n{vocab}"
-        for uid in config.user_map:
-            try:
-                await context.bot.send_message(chat_id=int(uid), text=text)
-            except Exception:
-                log.warning("daily_quote_send_failed", user_id=uid)
+        # Send to active group chats (where translations happen) instead of DMs
+        # which may fail if user hasn't started a private chat with the bot
+        sent_chats: set[int] = set()
+        for chat_id in translator._buffers:
+            if chat_id < 0:  # Group chats have negative IDs
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=text)
+                    sent_chats.add(chat_id)
+                except Exception:
+                    log.warning("daily_quote_send_failed", chat_id=chat_id)
+        # Fallback: try DMs if no group chats were found
+        if not sent_chats:
+            for uid in config.user_map:
+                try:
+                    await context.bot.send_message(chat_id=int(uid), text=text)
+                except Exception:
+                    log.warning("daily_quote_send_failed", user_id=uid)
 
     # --- Watchdog: force exit if polling stalls (polling mode only) ---
 

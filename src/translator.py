@@ -194,6 +194,38 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
 }
 
 
+_URL_PATTERN_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&'()*+,;=%")
+
+# Korean consonant/vowel jamo ranges (ㄱ-ㅎ, ㅏ-ㅣ) used for laughter/reactions
+_JAMO_CONSONANTS = range(0x3131, 0x314F)  # ㄱ-ㅎ
+_JAMO_VOWELS = range(0x314F, 0x3164)  # ㅏ-ㅣ
+
+
+def _is_url_only(text: str) -> bool:
+    """Check if text is purely URL(s) with no real message content."""
+    for word in text.split():
+        if word.startswith(("http://", "https://", "www.")):
+            continue
+        # Non-URL word found
+        if any(unicodedata.category(ch).startswith("L") for ch in word):
+            return False
+    return True
+
+
+def _is_jamo_only(text: str) -> bool:
+    """Check if text is only Korean jamo (ㅋㅋㅋ, ㅎㅎㅎ, ㅠㅠ, etc.) — untranslatable reactions."""
+    for ch in text:
+        cp = ord(ch)
+        if cp in _JAMO_CONSONANTS or cp in _JAMO_VOWELS:
+            continue
+        if unicodedata.category(ch) in ("Zs", "Cc", "Cf"):  # whitespace/control
+            continue
+        if unicodedata.category(ch).startswith("P") or unicodedata.category(ch).startswith("S"):
+            continue  # punctuation, symbols (emoji)
+        return False
+    return True
+
+
 def _has_translatable_text(text: str) -> bool:
     for ch in text:
         cat = unicodedata.category(ch)
@@ -308,6 +340,10 @@ class Translator:
         if not stripped:
             return True
         if not _has_translatable_text(stripped):
+            return True
+        if _is_url_only(stripped):
+            return True
+        if _is_jamo_only(stripped):
             return True
         if len(stripped) > MAX_INPUT_LENGTH:
             log.warning("message_too_long", length=len(stripped))
@@ -643,7 +679,7 @@ class Translator:
                 translation = self._clean_response(raw, original=text, target_lang=target_lang)
                 if not translation:
                     log.warning("empty_after_cleaning", chat_id=chat_id, raw=raw[:200])
-                    return None
+                    return ""  # Echo-only response — silently skip, not an error
                 source_lang = detect_source_language(text)
                 label = LANG_LABELS.get(source_lang, "")
                 return f"{label} {translation}" if label else translation

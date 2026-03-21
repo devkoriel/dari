@@ -164,9 +164,18 @@ class TestShouldSkip:
         t = Translator(api_key="test", model="test-model")
         assert t.should_skip("hello") is False
 
-    def test_no_skip_short_korean(self):
+    def test_skip_jamo_only(self):
         t = Translator(api_key="test", model="test-model")
-        assert t.should_skip("ㅋㅋ") is False
+        assert t.should_skip("ㅋㅋ") is True
+        assert t.should_skip("ㅋㅋㅋㅋㅋㅋ") is True
+        assert t.should_skip("ㅎㅎㅎ") is True
+        assert t.should_skip("ㅠㅠ") is True
+        assert t.should_skip("ㅋㅋㅋㅋㅋㅋㅋㅋㅋ") is True
+
+    def test_no_skip_jamo_with_syllables(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("앜ㅋㅋㅋ") is False
+        assert t.should_skip("ENTJ야") is False
 
     def test_no_skip_short_chinese(self):
         t = Translator(api_key="test", model="test-model")
@@ -183,6 +192,16 @@ class TestShouldSkip:
     def test_skip_punctuation_only(self):
         t = Translator(api_key="test", model="test-model")
         assert t.should_skip("???") is True
+
+    def test_skip_url_only(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("https://youtu.be/QJdp2rlADCs?si=aXb59HUssYhrK1su") is True
+        assert t.should_skip("https://www.16personalities.com/tw/isfp") is True
+
+    def test_no_skip_url_with_text(self):
+        t = Translator(api_key="test", model="test-model")
+        assert t.should_skip("이거 봐 https://youtu.be/abc") is False
+        assert t.should_skip("看這個 https://example.com") is False
         assert t.should_skip("...") is True
 
 
