@@ -11,7 +11,7 @@ class Config:
     anthropic_api_key: str
     user_map: dict[str, str]
     admin_user_id: str
-    claude_model: str = "claude-sonnet-4-6-20250514"
+    claude_model: str = "claude-sonnet-4-6"
     groq_api_key: str = ""
     data_dir: str = "data"
     daily_quote_hour: int = 9
@@ -54,7 +54,7 @@ def load_config() -> Config:
         if lang not in supported_languages:
             raise ValueError(f"Unsupported language '{lang}' for user {uid}. Supported: {supported_languages}")
 
-    model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6-20250514")
+    model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
     groq_api_key = os.environ.get("GROQ_API_KEY", "")
     data_dir = os.environ.get("DATA_DIR", "data")
     raw_hour = os.environ.get("DAILY_QUOTE_HOUR", "9")
