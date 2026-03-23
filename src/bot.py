@@ -529,8 +529,22 @@ def create_app(config: Config) -> Application:
 
     async def _send_reply(message, text: str, reply_to: int | None = None) -> None:
         """Send a reply, splitting at newline boundaries for Telegram's 4096 char limit."""
+
+        async def _send_with_retry(chunk: str, mid: int | None) -> None:
+            for attempt in range(3):
+                try:
+                    await message.reply_text(chunk, reply_to_message_id=mid)
+                    return
+                except Exception:
+                    if attempt == 2:
+                        log.error("send_reply_failed", attempt=attempt + 1, chunk_len=len(chunk))
+                        raise
+                    delay = 1.0 * (attempt + 1)
+                    log.warning("send_reply_retry", attempt=attempt + 1, delay=delay, chunk_len=len(chunk))
+                    await asyncio.sleep(delay)
+
         if len(text) <= 4096:
-            await message.reply_text(text, reply_to_message_id=reply_to)
+            await _send_with_retry(text, reply_to)
             return
 
         chunks: list[str] = []
@@ -551,7 +565,7 @@ def create_app(config: Config) -> Application:
 
         for i, chunk in enumerate(chunks):
             mid = reply_to if i == 0 else None
-            await message.reply_text(chunk, reply_to_message_id=mid)
+            await _send_with_retry(chunk, mid)
 
     async def _transcribe_and_reply(
         update: Update,
