@@ -507,6 +507,38 @@ class TestCleanImageResponse:
         assert result == "📷 NORAEBANG\n→ 노래방"
 
 
+class TestWrongLanguageDetection:
+    def test_chinese_when_target_is_korean(self):
+        t = Translator(api_key="test", model="test-model")
+        # Chinese output when target is Korean = wrong
+        assert t._is_wrong_language("看別人做感覺很難耶", "ko") is True
+
+    def test_korean_when_target_is_korean(self):
+        t = Translator(api_key="test", model="test-model")
+        # Korean output when target is Korean = correct
+        assert t._is_wrong_language("다른 사람이 하는 거 보면 어려워 보여", "ko") is False
+
+    def test_korean_when_target_is_chinese(self):
+        t = Translator(api_key="test", model="test-model")
+        # Korean output when target is Chinese = wrong
+        assert t._is_wrong_language("졸린데 잠이 안 와", "zh-TW") is True
+
+    def test_chinese_when_target_is_chinese(self):
+        t = Translator(api_key="test", model="test-model")
+        # Chinese output when target is Chinese = correct
+        assert t._is_wrong_language("很想睡但睡不著", "zh-TW") is False
+
+    def test_short_text_not_flagged(self):
+        t = Translator(api_key="test", model="test-model")
+        # Single char too short to judge
+        assert t._is_wrong_language("好", "ko") is False
+
+    def test_mixed_text_majority_wins(self):
+        t = Translator(api_key="test", model="test-model")
+        # Mostly Chinese with a Korean word = wrong for Korean target
+        assert t._is_wrong_language("看別人做很困難啊真的", "ko") is True
+
+
 class TestStats:
     def test_initial_stats(self):
         t = Translator(api_key="test", model="test-model")

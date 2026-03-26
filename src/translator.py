@@ -397,7 +397,9 @@ class Translator:
 
         sender_info = f" from {sender_name}" if sender_name else ""
         user_content = (
-            f"Recent conversation:\n{context_block}\n\n[Message{sender_info}] Translate to {lang_name}:\n{text}"
+            f"Recent conversation:\n{context_block}\n\n"
+            f"[Message{sender_info}] Translate the following into {lang_name}. "
+            f"Your entire response must be in {lang_name} only.\n{text}"
         )
         return [{"role": "user", "content": user_content}]
 
@@ -644,6 +646,20 @@ class Translator:
 
         return "\n".join(cleaned)
 
+    def _is_wrong_language(self, translation: str, target_lang: str) -> bool:
+        """Check if the translation is predominantly in the wrong language (source instead of target)."""
+        ko_count, zh_count, en_count = _count_script_chars(translation)
+        total = ko_count + zh_count + en_count
+        if total < 2:
+            return False  # Too short to judge
+        if target_lang == "ko":
+            # Target is Korean but output is mostly Chinese
+            return zh_count > ko_count and zh_count / total > 0.5
+        if target_lang == "zh-TW":
+            # Target is Chinese but output is mostly Korean
+            return ko_count > zh_count and ko_count / total > 0.5
+        return False
+
     async def translate(self, chat_id: int, text: str, target_lang: str, sender_name: str = "") -> str | None:
         # Try instant phrase lookup first
         quick = self.lookup_phrase(text, target_lang)
@@ -687,6 +703,33 @@ class Translator:
                 if not translation:
                     log.warning("empty_after_cleaning", chat_id=chat_id, raw=raw[:200])
                     return ""  # Echo-only response — silently skip, not an error
+
+                # Verify output is actually in the target language, not a same-language paraphrase
+                if self._is_wrong_language(translation, target_lang):
+                    lang_name = LANGUAGE_NAMES.get(target_lang, target_lang)
+                    log.warning("wrong_language_output", target=target_lang, raw=raw[:200])
+                    # Retry with explicit correction
+                    correction_messages = [
+                        *messages,
+                        {"role": "assistant", "content": raw},
+                        {"role": "user", "content": f"Wrong language. Translate into {lang_name} only. Do not paraphrase in the source language."},
+                    ]
+                    self.stats["api_calls"] += 1
+                    retry_resp = await self._client.messages.create(
+                        model=self._model,
+                        max_tokens=max_tokens,
+                        system=cached_system,
+                        messages=correction_messages,
+                    )
+                    if retry_resp.content:
+                        retry_raw = retry_resp.content[0].text.strip()
+                        retry_translation = self._clean_response(retry_raw, original=text, target_lang=target_lang)
+                        if retry_translation and not self._is_wrong_language(retry_translation, target_lang):
+                            translation = retry_translation
+                        elif retry_translation:
+                            log.warning("wrong_language_retry_failed", target=target_lang)
+                            translation = retry_translation  # Use it anyway
+
                 source_lang = detect_source_language(text)
                 label = LANG_LABELS.get(source_lang, "")
                 return f"{label} {translation}" if label else translation

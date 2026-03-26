@@ -486,6 +486,11 @@ def create_app(config: Config) -> Application:
         consecutive_errors = 0
         error_notified = False
 
+        # Persist group chat ID for daily quote delivery after restarts
+        if chat_id < 0 and not store.get("active_groups", str(chat_id)):
+            store.set("active_groups", str(chat_id), True)
+            store.save()
+
         translator.add_message(
             chat_id=chat_id,
             sender=sender_name,
@@ -728,18 +733,22 @@ def create_app(config: Config) -> Application:
         quote = random_quote()
         vocab = random_vocabulary()
         text = f"{quote}\n\n{vocab}"
-        # Send to active group chats (where translations happen) instead of DMs
-        # which may fail if user hasn't started a private chat with the bot
-        sent_chats: set[int] = set()
+        # Collect group chat IDs from both in-memory buffers and persistent store
+        group_ids: set[int] = set()
         for chat_id in translator._buffers:
-            if chat_id < 0:  # Group chats have negative IDs
-                try:
-                    await context.bot.send_message(chat_id=chat_id, text=text)
-                    sent_chats.add(chat_id)
-                except Exception:
-                    log.warning("daily_quote_send_failed", chat_id=chat_id)
-        # Fallback: try DMs if no group chats were found
-        if not sent_chats:
+            if chat_id < 0:
+                group_ids.add(chat_id)
+        for chat_id_str in store.get_section("active_groups"):
+            group_ids.add(int(chat_id_str))
+
+        sent = False
+        for chat_id in group_ids:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text)
+                sent = True
+            except Exception:
+                log.warning("daily_quote_send_failed", chat_id=chat_id)
+        if not sent:
             for uid in config.user_map:
                 try:
                     await context.bot.send_message(chat_id=int(uid), text=text)
