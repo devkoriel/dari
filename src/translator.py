@@ -712,7 +712,10 @@ class Translator:
                     correction_messages = [
                         *messages,
                         {"role": "assistant", "content": raw},
-                        {"role": "user", "content": f"Wrong language. Translate into {lang_name} only. Do not paraphrase in the source language."},
+                        {
+                            "role": "user",
+                            "content": f"Wrong language. Translate into {lang_name} only. Do not paraphrase in the source language.",
+                        },
                     ]
                     self.stats["api_calls"] += 1
                     retry_resp = await self._client.messages.create(
