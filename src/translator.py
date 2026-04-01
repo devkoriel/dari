@@ -11,7 +11,8 @@ import structlog
 from anthropic import AsyncAnthropic
 
 MAX_RETRIES = 2
-RETRY_BACKOFF = 1.0
+RETRY_BACKOFF = 2.0
+FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 log = structlog.get_logger()
 
@@ -466,7 +467,8 @@ class Translator:
                 return self._clean_image_response(raw)
             except Exception:
                 if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    delay = RETRY_BACKOFF * (2**attempt)
+                    await asyncio.sleep(delay)
                     continue
                 self.stats["errors"] += 1
                 log.exception("image_translation_failed")
@@ -736,10 +738,31 @@ class Translator:
                 source_lang = detect_source_language(text)
                 label = LANG_LABELS.get(source_lang, "")
                 return f"{label} {translation}" if label else translation
-            except Exception:
+            except Exception as exc:
                 if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    delay = RETRY_BACKOFF * (2**attempt)
+                    await asyncio.sleep(delay)
                     continue
+                # Fallback to Haiku on overloaded errors
+                if "OverloadedError" in type(exc).__name__ or "529" in str(exc):
+                    try:
+                        log.warning("fallback_to_haiku", target=target_lang)
+                        self.stats["api_calls"] += 1
+                        response = await self._client.messages.create(
+                            model=FALLBACK_MODEL,
+                            max_tokens=max_tokens,
+                            system=cached_system,
+                            messages=messages,
+                        )
+                        if response.content:
+                            raw = response.content[0].text.strip()
+                            translation = self._clean_response(raw, original=text, target_lang=target_lang)
+                            if translation:
+                                source_lang = detect_source_language(text)
+                                label = LANG_LABELS.get(source_lang, "")
+                                return f"{label} {translation}" if label else translation
+                    except Exception:
+                        log.exception("haiku_fallback_failed", target_lang=target_lang)
                 self.stats["errors"] += 1
                 log.exception("translation_failed", target_lang=target_lang, attempts=attempt + 1)
                 return None
@@ -809,10 +832,15 @@ class Translator:
                 flagged = f"{label} {translation}" if label else translation
 
                 return (flagged, pronunciation)
-            except Exception:
+            except Exception as exc:
                 if attempt < MAX_RETRIES:
-                    await asyncio.sleep(RETRY_BACKOFF * (attempt + 1))
+                    delay = RETRY_BACKOFF * (2**attempt)
+                    await asyncio.sleep(delay)
                     continue
+                # Fallback to Haiku on overloaded errors (without learn mode)
+                if "OverloadedError" in type(exc).__name__ or "529" in str(exc):
+                    result = await self.translate(chat_id, text, target_lang, sender_name)
+                    return (result, None)
                 self.stats["errors"] += 1
                 log.exception("translate_learn_failed", target_lang=target_lang)
                 return (None, None)
