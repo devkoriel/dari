@@ -727,7 +727,9 @@ def create_app(config: Config) -> Application:
         if message is None or message.from_user is None:
             return
 
-        target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
+        target_lang = (
+            lang_overrides.get(user_id) or config.target_language(user_id) or store.get("dynamic_users", user_id)
+        )
         if target_lang is None:
             return
 
@@ -840,7 +842,9 @@ def create_app(config: Config) -> Application:
             return
 
         user_id = str(message.from_user.id)
-        target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
+        target_lang = (
+            lang_overrides.get(user_id) or config.target_language(user_id) or store.get("dynamic_users", user_id)
+        )
         if target_lang is None:
             return
 

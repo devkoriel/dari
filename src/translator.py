@@ -55,7 +55,20 @@ SPECIAL CASES:
 CONTEXT USAGE:
 - You receive recent conversation history to understand tone and flow.
 - ALWAYS translate the CURRENT message based on its own meaning. Context helps with ambiguity only.
-- Example: if context mentions "work hard" but the current message says "it's working now", translate as "functioning/running" NOT "laboring"."""
+- Example: if context mentions "work hard" but the current message says "it's working now", translate as "functioning/running" NOT "laboring".
+
+EXAMPLES (input → output):
+- 졸린데 → 好睏 (sleepy, NOT 好聽 which means "sounds good")
+- 졸려 → 好睏
+- 배고파 → 好餓
+- 심심해 → 好無聊
+- 그래? → 是嗎？ (context-dependent)
+- 어디야 → 你在哪
+- 일어났어? → 起床了嗎？
+- 想你了 → 보고싶어
+- 在幹嘛 → 뭐해
+- 你還好嗎 → 괜찮아?
+- 吃飽了 → 배불러"""
 
 LEARN_SYSTEM_PROMPT = """You are a translation engine with pronunciation. You receive a message and output the translation AND pronunciation.
 
@@ -153,6 +166,25 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
     ("화이팅!", "zh-TW"): "加油！",
     ("아이고", "zh-TW"): "唉呀",
     ("헐", "zh-TW"): "天啊",
+    ("졸려", "zh-TW"): "好睏",
+    ("졸린데", "zh-TW"): "好睏",
+    ("졸려...", "zh-TW"): "好睏...",
+    ("배고파", "zh-TW"): "好餓",
+    ("배고파!", "zh-TW"): "好餓！",
+    ("심심해", "zh-TW"): "好無聊",
+    ("어디야", "zh-TW"): "你在哪",
+    ("어디야?", "zh-TW"): "你在哪？",
+    ("일어났어?", "zh-TW"): "起床了嗎？",
+    ("괜찮아", "zh-TW"): "沒事",
+    ("괜찮아?", "zh-TW"): "你還好嗎？",
+    ("피곤해", "zh-TW"): "好累",
+    ("힘들어", "zh-TW"): "好辛苦",
+    ("그래?", "zh-TW"): "是嗎？",
+    ("그래", "zh-TW"): "好",
+    ("나도", "zh-TW"): "我也是",
+    ("나도!", "zh-TW"): "我也是！",
+    ("맞아", "zh-TW"): "對啊",
+    ("맞아!", "zh-TW"): "對啊！",
     # Konglish → Chinese
     ("굿모닝", "zh-TW"): "早安",
     ("굿모오닝", "zh-TW"): "早安",
@@ -212,6 +244,23 @@ PHRASE_TABLE: dict[tuple[str, str], str] = {
     ("啊哈", "ko"): "아하",
     ("掰掰", "ko"): "바이바이",
     ("嗨", "ko"): "하이",
+    ("好睏", "ko"): "졸려",
+    ("好餓", "ko"): "배고파",
+    ("好無聊", "ko"): "심심해",
+    ("你在哪", "ko"): "어디야",
+    ("你在哪？", "ko"): "어디야?",
+    ("起床了嗎", "ko"): "일어났어?",
+    ("起床了嗎？", "ko"): "일어났어?",
+    ("沒事", "ko"): "괜찮아",
+    ("你還好嗎", "ko"): "괜찮아?",
+    ("你還好嗎？", "ko"): "괜찮아?",
+    ("好累", "ko"): "피곤해",
+    ("好辛苦", "ko"): "힘들어",
+    ("是嗎", "ko"): "그래?",
+    ("是嗎？", "ko"): "그래?",
+    ("我也是", "ko"): "나도",
+    ("對啊", "ko"): "맞아",
+    ("吃飽了", "ko"): "배불러",
     # Chinese → English
     ("哈哈", "en"): "haha",
     ("哈哈哈", "en"): "hahaha",
@@ -500,11 +549,52 @@ class Translator:
                     log.debug("image_no_text", response=raw[:100])
                     return None
                 return self._clean_image_response(raw)
-            except Exception:
+            except Exception as exc:
                 if attempt < MAX_RETRIES:
                     delay = RETRY_BACKOFF * (2**attempt)
                     await asyncio.sleep(delay)
                     continue
+                # Haiku fallback on overload
+                if "overloaded" in str(exc).lower() or (hasattr(exc, "status_code") and exc.status_code == 529):
+                    try:
+                        log.warning("image_fallback_to_haiku")
+                        self.stats["api_calls"] += 1
+                        response = await self._client.messages.create(
+                            model=FALLBACK_MODEL,
+                            max_tokens=512,
+                            system=image_system,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "image",
+                                            "source": {
+                                                "type": "base64",
+                                                "media_type": media_type,
+                                                "data": b64_data,
+                                            },
+                                        },
+                                        {
+                                            "type": "text",
+                                            "text": (
+                                                f"Extract ALL text from this image. Then translate it to {lang_name}.\n"
+                                                f"If the text is ALREADY in {lang_name}, translate to {other_lang_hint} instead.\n\n"
+                                                "Format:\n📷 [original text]\n→ [translation]\n\n"
+                                                "If there is NO text in the image, reply ONLY: No text found.\n"
+                                                "Do NOT add any commentary, descriptions, or notes about the image."
+                                            ),
+                                        },
+                                    ],
+                                }
+                            ],
+                        )
+                        if response.content:
+                            raw = response.content[0].text.strip()
+                            if not raw.lower().startswith("no text found"):
+                                return self._clean_image_response(raw)
+                    except Exception:
+                        log.exception("image_haiku_fallback_failed")
                 self.stats["errors"] += 1
                 log.exception("image_translation_failed")
                 return None
@@ -726,6 +816,7 @@ class Translator:
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=max_tokens,
+                    temperature=0.3,
                     system=cached_system,
                     messages=messages,
                 )
@@ -761,6 +852,7 @@ class Translator:
                     retry_resp = await self._client.messages.create(
                         model=self._model,
                         max_tokens=max_tokens,
+                        temperature=0.2,
                         system=cached_system,
                         messages=correction_messages,
                     )
@@ -789,6 +881,7 @@ class Translator:
                         response = await self._client.messages.create(
                             model=FALLBACK_MODEL,
                             max_tokens=max_tokens,
+                            temperature=0.3,
                             system=cached_system,
                             messages=messages,
                         )
@@ -838,6 +931,7 @@ class Translator:
                 response = await self._client.messages.create(
                     model=self._model,
                     max_tokens=max_tokens,
+                    temperature=0.3,
                     system=cached_system,
                     messages=messages,
                 )
