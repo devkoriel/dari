@@ -60,6 +60,8 @@ Example: [1 example sentence in both languages]
 
 Keep it to 4-6 lines max. Be concise and fun. Traditional Chinese (繁體中文) only. Korean in 반말."""
 
+SUPPORTED_LANGS = {"ko", "zh-TW", "en"}
+
 HELP_TEXT = """🌉 Dari Commands
 
 /lang ko|en|zh|reset — Change translation target
@@ -72,6 +74,14 @@ HELP_TEXT = """🌉 Dari Commands
 /dday del <label> — Remove a date
 /stats — Bot statistics (admin only)
 /help — This message
+
+👥 Admin Commands:
+/adduser ko|zh|en — Reply to a message to register user
+/adduser <id> ko|zh|en — Register by user ID
+/removeuser — Reply to remove a user
+/removeuser <id> — Remove by user ID
+/users — List registered users
+/mode couple|friends — Set translation tone for this group
 
 📷 Send a photo to extract & translate text
 🎤 Voice messages are transcribed & translated
@@ -401,6 +411,132 @@ def create_app(config: Config) -> Application:
 
         await message.reply_text("\n".join(lines))
 
+    # --- /adduser command (admin only) ---
+
+    async def handle_adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+        if not config.is_admin(str(message.from_user.id)):
+            return
+
+        args = context.args or []
+        reply = message.reply_to_message
+
+        if reply and reply.from_user and args:
+            # /adduser <lang> — reply to a message
+            target_uid = str(reply.from_user.id)
+            target_name = reply.from_user.first_name or str(target_uid)
+            lang_arg = args[0].lower()
+        elif len(args) >= 2:
+            # /adduser <id> <lang>
+            target_uid = args[0]
+            target_name = target_uid
+            lang_arg = args[1].lower()
+        else:
+            await message.reply_text("Reply to a message with /adduser <ko|zh|en>\nOr: /adduser <user_id> <ko|zh|en>")
+            return
+
+        lang = LANG_SHORTCUTS.get(lang_arg)
+        if lang is None or lang not in SUPPORTED_LANGS:
+            await message.reply_text(f"Unknown language: {lang_arg}\nSupported: ko, zh, en")
+            return
+
+        store.set("dynamic_users", target_uid, lang)
+        store.save()
+        lang_name = LANGUAGE_NAMES.get(lang, lang)
+        await message.reply_text(f"✅ Added {target_name} → {lang_name}")
+        log.info("user_added", user_id=target_uid, name=target_name, lang=lang)
+
+    # --- /removeuser command (admin only) ---
+
+    async def handle_removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+        if not config.is_admin(str(message.from_user.id)):
+            return
+
+        args = context.args or []
+        reply = message.reply_to_message
+
+        if reply and reply.from_user:
+            target_uid = str(reply.from_user.id)
+            target_name = reply.from_user.first_name or target_uid
+        elif args:
+            target_uid = args[0]
+            target_name = target_uid
+        else:
+            await message.reply_text("Reply to a message with /removeuser\nOr: /removeuser <user_id>")
+            return
+
+        if store.get("dynamic_users", target_uid):
+            store.delete("dynamic_users", target_uid)
+            store.save()
+            await message.reply_text(f"✅ Removed {target_name}")
+            log.info("user_removed", user_id=target_uid, name=target_name)
+        else:
+            await message.reply_text(f"User {target_name} not found in dynamic users")
+
+    # --- /users command (admin only) ---
+
+    async def handle_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+        if not config.is_admin(str(message.from_user.id)):
+            return
+
+        lines = ["👥 Registered Users\n"]
+
+        # Static users from config
+        for uid, lang in config.user_map.items():
+            lang_name = LANGUAGE_NAMES.get(lang, lang)
+            us = store.get("user_stats", uid)
+            name = us["name"] if us else uid
+            lines.append(f"  {name} ({uid}) → {lang_name} [config]")
+
+        # Dynamic users from store
+        dynamic = store.get_section("dynamic_users")
+        for uid, lang in dynamic.items():
+            lang_name = LANGUAGE_NAMES.get(lang, lang)
+            us = store.get("user_stats", uid)
+            name = us["name"] if us else uid
+            lines.append(f"  {name} ({uid}) → {lang_name} [dynamic]")
+
+        if len(lines) == 1:
+            lines.append("  No users registered")
+
+        await message.reply_text("\n".join(lines))
+
+    # --- /mode command (admin only) ---
+
+    async def handle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.message
+        if message is None or message.from_user is None:
+            return
+        if not config.is_admin(str(message.from_user.id)):
+            return
+
+        chat_id = str(message.chat.id)
+        args = context.args or []
+
+        if not args:
+            current = store.get("group_modes", chat_id, "couple")
+            await message.reply_text(f"Current mode: {current}\nUsage: /mode couple | friends")
+            return
+
+        mode = args[0].lower()
+        if mode not in ("couple", "friends"):
+            await message.reply_text("Unknown mode. Use: /mode couple | friends")
+            return
+
+        store.set("group_modes", chat_id, mode)
+        store.save()
+        desc = "💕 Intimate couple" if mode == "couple" else "👥 Casual friends"
+        await message.reply_text(f"Mode set to: {desc}")
+        log.info("mode_changed", chat_id=chat_id, mode=mode)
+
     # --- Core translation + reply ---
 
     async def _notify_admin_on_errors(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -449,7 +585,9 @@ def create_app(config: Config) -> Application:
     ) -> None:
         nonlocal consecutive_errors, error_notified
 
-        target_lang = lang_overrides.get(user_id) or config.target_language(user_id)
+        target_lang = (
+            lang_overrides.get(user_id) or config.target_language(user_id) or store.get("dynamic_users", user_id)
+        )
         if target_lang is None:
             return
 
@@ -463,14 +601,17 @@ def create_app(config: Config) -> Application:
 
         _track_message_stats(user_id, sender_name)
 
+        mode = store.get("group_modes", str(chat_id), "couple")
         learn_on = store.get("learn_mode", user_id, False)
         pronunciation = None
 
         async with semaphore:
             if learn_on and target_lang != "en":
-                translation, pronunciation = await translator.translate_learn(chat_id, text, target_lang, sender_name)
+                translation, pronunciation = await translator.translate_learn(
+                    chat_id, text, target_lang, sender_name, mode=mode
+                )
             else:
-                translation = await translator.translate(chat_id, text, target_lang, sender_name)
+                translation = await translator.translate(chat_id, text, target_lang, sender_name, mode=mode)
 
         if translation is None:
             consecutive_errors += 1
@@ -796,6 +937,10 @@ def create_app(config: Config) -> Application:
     app.add_handler(CommandHandler("teach", handle_teach))
     app.add_handler(CommandHandler("tr", handle_tr))
     app.add_handler(CommandHandler("dday", handle_dday))
+    app.add_handler(CommandHandler("adduser", handle_adduser))
+    app.add_handler(CommandHandler("removeuser", handle_removeuser))
+    app.add_handler(CommandHandler("users", handle_users))
+    app.add_handler(CommandHandler("mode", handle_mode))
     app.add_handler(
         MessageHandler(
             (filters.TEXT | filters.CAPTION) & ~filters.COMMAND,
@@ -805,6 +950,29 @@ def create_app(config: Config) -> Application:
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.VIDEO_NOTE | filters.VIDEO, handle_video))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # Register commands with Telegram so they appear in the command menu
+    async def post_init(application: Application) -> None:
+        from telegram import BotCommand
+
+        await application.bot.set_my_commands(
+            [
+                BotCommand("help", "Show all commands"),
+                BotCommand("lang", "Change translation target language"),
+                BotCommand("learn", "Toggle learn mode (original + pronunciation)"),
+                BotCommand("say", "How to say a phrase in the other language"),
+                BotCommand("teach", "Cultural explanation of a word"),
+                BotCommand("tr", "Reply to translate a specific message"),
+                BotCommand("dday", "D-day counter"),
+                BotCommand("adduser", "Register a user for translation (admin)"),
+                BotCommand("removeuser", "Remove a user (admin)"),
+                BotCommand("users", "List registered users (admin)"),
+                BotCommand("mode", "Set translation tone: couple/friends (admin)"),
+                BotCommand("stats", "Bot statistics (admin)"),
+            ]
+        )
+
+    app.post_init = post_init
 
     # Schedule daily quote
     if app.job_queue is not None:

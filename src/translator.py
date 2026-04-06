@@ -74,6 +74,41 @@ RULES:
 
 ALL OTHER RULES from the main translation engine apply (casual couple's chat, 반말, Taiwanese Mandarin, Traditional Chinese only)."""
 
+FRIENDS_SYSTEM_PROMPT = """You are a real-time translation engine for a multilingual friend group chat. Output ONLY the translation — nothing else.
+
+ABSOLUTE RULES:
+1. Output ONLY the translated text. ZERO other words. No thinking, no alternatives, no explanations, no meta-commentary.
+2. NEVER output the original text. NEVER repeat the input. NEVER add quotation marks.
+3. ONE translation only. Do NOT provide multiple versions or revise your answer mid-response.
+4. PRESERVE the original formatting: line breaks, paragraphs, bullet points, structure.
+5. Output ONLY in the target language. Never mix in English or the source language.
+
+CONTEXT:
+- This is a casual multilingual friend group with Korean and Chinese speakers.
+- Everyone is friends — keep the tone natural and friendly.
+
+TONE & STYLE:
+- Casual and natural — like chatting with friends, not a textbook.
+- Korean: use 반말 by default (뭐해, 대박, 진짜?). Match formality if the speaker uses 존댓말.
+- Chinese: casual spoken Taiwanese Mandarin. Traditional Chinese (繁體中文) ONLY. Never Simplified Chinese.
+- Match the vibe: funny→funny, excited→excited, sarcastic→sarcastic.
+- Short messages get short translations. 오키→好, 진짜?→真的嗎?
+
+SPECIAL CASES:
+- Konglish (Korean-transliterated English like 오케이, 하이): translate the MEANING, not the sound.
+- Internet slang & abbreviations: translate naturally. ㄱㅅ→謝啦, ㅇㅋ→好.
+- Proper nouns, brand names, song titles: keep as-is in the translation.
+- When a message mixes languages, translate ALL of it to the target language.
+
+CONTEXT USAGE:
+- You receive recent conversation history to understand tone and flow.
+- ALWAYS translate the CURRENT message based on its own meaning. Context helps with ambiguity only."""
+
+SYSTEM_PROMPTS = {
+    "couple": SYSTEM_PROMPT,
+    "friends": FRIENDS_SYSTEM_PROMPT,
+}
+
 MAX_INPUT_LENGTH = 10000
 MAX_CHATS = 100
 
@@ -662,7 +697,9 @@ class Translator:
             return ko_count > zh_count and ko_count / total > 0.5
         return False
 
-    async def translate(self, chat_id: int, text: str, target_lang: str, sender_name: str = "") -> str | None:
+    async def translate(
+        self, chat_id: int, text: str, target_lang: str, sender_name: str = "", mode: str = "couple"
+    ) -> str | None:
         # Try instant phrase lookup first
         quick = self.lookup_phrase(text, target_lang)
         if quick is not None:
@@ -674,10 +711,11 @@ class Translator:
         max_tokens = min(4096, max(64, len(text) * 3))
 
         # Use prompt caching for the system prompt
+        prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPT)
         cached_system = [
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": prompt,
                 "cache_control": {"type": "ephemeral"},
             }
         ]
@@ -768,13 +806,13 @@ class Translator:
                 return None
 
     async def translate_learn(
-        self, chat_id: int, text: str, target_lang: str, sender_name: str = ""
+        self, chat_id: int, text: str, target_lang: str, sender_name: str = "", mode: str = "couple"
     ) -> tuple[str | None, str | None]:
         """Translate with pronunciation in a single API call.
         Returns (flagged_translation, pronunciation) or (None, None) on failure.
         """
         if target_lang == "en":
-            result = await self.translate(chat_id, text, target_lang, sender_name)
+            result = await self.translate(chat_id, text, target_lang, sender_name, mode=mode)
             return (result, None)
 
         # Try phrase table first
@@ -785,10 +823,11 @@ class Translator:
         messages = self._build_messages(chat_id, text, target_lang, sender_name)
         max_tokens = min(4096, max(80, len(text) * 3))
 
+        prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPT)
         cached_system = [
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT + "\n\n" + LEARN_SYSTEM_PROMPT,
+                "text": prompt + "\n\n" + LEARN_SYSTEM_PROMPT,
                 "cache_control": {"type": "ephemeral"},
             }
         ]

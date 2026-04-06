@@ -16,6 +16,8 @@ _DEFAULT_DATA: dict[str, Any] = {
     "user_stats": {},
     "lang_overrides": {},
     "active_groups": {},
+    "dynamic_users": {},
+    "group_modes": {},
 }
 
 

@@ -303,3 +303,115 @@ class TestDDay:
         update, context = _make_command_update(user_id=111, args=["set", "not-a-date"])
         await handler.callback(update, context)
         assert "Invalid" in update.message.reply_text.call_args[0][0]
+
+
+class TestAddUser:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="adduser")
+
+    @pytest.mark.asyncio
+    async def test_adduser_by_reply(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["ko"])
+        # Simulate replying to a message from user 333
+        replied_msg = MagicMock()
+        replied_msg.from_user.id = 333
+        replied_msg.from_user.first_name = "Friend"
+        update.message.reply_to_message = replied_msg
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "Friend" in reply
+        assert "Korean" in reply
+
+    @pytest.mark.asyncio
+    async def test_adduser_by_id(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["444", "zh"])
+        update.message.reply_to_message = None
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "444" in reply
+        assert "Chinese" in reply
+
+    @pytest.mark.asyncio
+    async def test_adduser_non_admin_ignored(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=999, args=["ko"])
+        await handler.callback(update, context)
+        update.message.reply_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_adduser_invalid_lang(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["555", "xyz"])
+        update.message.reply_to_message = None
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "Unknown" in reply
+
+
+class TestRemoveUser:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="removeuser")
+
+    @pytest.mark.asyncio
+    async def test_removeuser_not_found(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["999"])
+        update.message.reply_to_message = None
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "not found" in reply
+
+
+class TestMode:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="mode")
+
+    @pytest.mark.asyncio
+    async def test_mode_set_friends(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["friends"])
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "friends" in reply.lower() or "Casual" in reply
+
+    @pytest.mark.asyncio
+    async def test_mode_invalid(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=["invalid"])
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "Unknown" in reply
+
+    @pytest.mark.asyncio
+    async def test_mode_no_args_shows_current(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111, args=[])
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "couple" in reply
+
+
+class TestUsers:
+    def _get_handler(self, config):
+        app = create_app(config)
+        return _find_handler(app, command="users")
+
+    @pytest.mark.asyncio
+    async def test_users_lists_config_users(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=111)
+        await handler.callback(update, context)
+        reply = update.message.reply_text.call_args[0][0]
+        assert "config" in reply.lower()
+
+    @pytest.mark.asyncio
+    async def test_users_non_admin_ignored(self, config):
+        handler = self._get_handler(config)
+        update, context = _make_command_update(user_id=999)
+        await handler.callback(update, context)
+        update.message.reply_text.assert_not_called()
