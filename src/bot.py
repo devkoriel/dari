@@ -757,8 +757,8 @@ def create_app(config: Config) -> Application:
                     return sent.message_id if sent else None
                 except Exception:
                     if attempt == 2:
-                        log.error("send_reply_failed", attempt=attempt + 1, chunk_len=len(chunk))
-                        raise
+                        log.exception("send_reply_failed", attempt=attempt + 1, chunk_len=len(chunk))
+                        return None
                     delay = 1.0 * (attempt + 1)
                     log.warning("send_reply_retry", attempt=attempt + 1, delay=delay, chunk_len=len(chunk))
                     await asyncio.sleep(delay)
@@ -929,6 +929,11 @@ def create_app(config: Config) -> Application:
         # Extract and translate text from the image itself
         photo = message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
+
+        if file.file_size and file.file_size > 20 * 1024 * 1024:
+            log.warning("photo_too_large", size=file.file_size)
+            return
+
         image_bytes = await file.download_as_bytearray()
 
         async with semaphore:
