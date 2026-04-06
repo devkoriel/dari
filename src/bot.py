@@ -101,6 +101,9 @@ def create_app(config: Config) -> Application:
     last_activity = time.monotonic()
     consecutive_errors = 0
     error_notified = False
+    # Track original message → bot reply for edit support: (chat_id, msg_id) → reply_msg_id
+    reply_map: dict[tuple[int, int], int] = {}
+    REPLY_MAP_MAX = 500
 
     # --- Admin gate ---
 
@@ -646,8 +649,72 @@ def create_app(config: Config) -> Application:
         else:
             reply_text = translation
 
-        await _send_reply(update.message, reply_text, update.message.message_id)
+        reply_msg_id = await _send_reply(update.message, reply_text, update.message.message_id)
+        if reply_msg_id is not None:
+            # Evict oldest entries if map is full
+            if len(reply_map) >= REPLY_MAP_MAX:
+                oldest = next(iter(reply_map))
+                del reply_map[oldest]
+            reply_map[(chat_id, update.message.message_id)] = reply_msg_id
         log.info("translated", sender=sender_name, chat_id=chat_id, target=target_lang)
+
+    async def _translate_and_edit(
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        user_id: str,
+        sender_name: str,
+        text: str,
+        message,
+    ) -> None:
+        """Re-translate an edited message and update the bot's previous reply."""
+        key = (chat_id, message.message_id)
+        bot_reply_id = reply_map.get(key)
+        if bot_reply_id is None:
+            return  # No tracked reply to edit
+
+        target_lang = (
+            lang_overrides.get(user_id) or config.target_language(user_id) or store.get("dynamic_users", user_id)
+        )
+        if target_lang is None:
+            return
+
+        if translator.should_skip(text):
+            return
+
+        if translator.is_same_language(text, target_lang):
+            return
+
+        mode = store.get("group_modes", str(chat_id), "couple")
+        learn_on = store.get("learn_mode", user_id, False)
+        pronunciation = None
+
+        async with semaphore:
+            if learn_on and target_lang != "en":
+                translation, pronunciation = await translator.translate_learn(
+                    chat_id, text, target_lang, sender_name, mode=mode
+                )
+            else:
+                translation = await translator.translate(chat_id, text, target_lang, sender_name, mode=mode)
+
+        if not translation:
+            return
+
+        if learn_on:
+            reply_text = f"{text}\n→ {translation}"
+            if pronunciation:
+                reply_text += f"\n🗣 {pronunciation}"
+        else:
+            reply_text = translation
+
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_reply_id,
+                text=reply_text,
+            )
+            log.info("edit_translated", sender=sender_name, chat_id=chat_id, target=target_lang)
+        except Exception:
+            log.exception("edit_message_failed", chat_id=chat_id, msg_id=bot_reply_id)
 
     # --- Message handlers ---
 
@@ -655,7 +722,7 @@ def create_app(config: Config) -> Application:
         nonlocal last_activity
         last_activity = time.monotonic()
 
-        message = update.message
+        message = update.message or update.edited_message
         if message is None or message.from_user is None:
             return
 
@@ -671,16 +738,23 @@ def create_app(config: Config) -> Application:
         sender_name = message.from_user.first_name or "Unknown"
         chat_id = message.chat.id
 
-        await _translate_and_reply(update, context, chat_id, user_id, sender_name, text)
+        # Check if this is an edit of a previously translated message
+        is_edit = update.edited_message is not None
+        if is_edit:
+            await _translate_and_edit(context, chat_id, user_id, sender_name, text, message)
+        else:
+            await _translate_and_reply(update, context, chat_id, user_id, sender_name, text)
 
-    async def _send_reply(message, text: str, reply_to: int | None = None) -> None:
-        """Send a reply, splitting at newline boundaries for Telegram's 4096 char limit."""
+    async def _send_reply(message, text: str, reply_to: int | None = None) -> int | None:
+        """Send a reply, splitting at newline boundaries for Telegram's 4096 char limit.
+        Returns the message_id of the first sent message (for edit tracking)."""
+        first_msg_id: int | None = None
 
-        async def _send_with_retry(chunk: str, mid: int | None) -> None:
+        async def _send_with_retry(chunk: str, mid: int | None) -> int | None:
             for attempt in range(3):
                 try:
-                    await message.reply_text(chunk, reply_to_message_id=mid)
-                    return
+                    sent = await message.reply_text(chunk, reply_to_message_id=mid)
+                    return sent.message_id if sent else None
                 except Exception:
                     if attempt == 2:
                         log.error("send_reply_failed", attempt=attempt + 1, chunk_len=len(chunk))
@@ -688,10 +762,11 @@ def create_app(config: Config) -> Application:
                     delay = 1.0 * (attempt + 1)
                     log.warning("send_reply_retry", attempt=attempt + 1, delay=delay, chunk_len=len(chunk))
                     await asyncio.sleep(delay)
+            return None
 
         if len(text) <= 4096:
-            await _send_with_retry(text, reply_to)
-            return
+            first_msg_id = await _send_with_retry(text, reply_to)
+            return first_msg_id
 
         chunks: list[str] = []
         current: list[str] = []
@@ -711,7 +786,10 @@ def create_app(config: Config) -> Application:
 
         for i, chunk in enumerate(chunks):
             mid = reply_to if i == 0 else None
-            await _send_with_retry(chunk, mid)
+            sent_id = await _send_with_retry(chunk, mid)
+            if i == 0:
+                first_msg_id = sent_id
+        return first_msg_id
 
     async def _transcribe_and_reply(
         update: Update,
@@ -947,7 +1025,13 @@ def create_app(config: Config) -> Application:
     app.add_handler(CommandHandler("mode", handle_mode))
     app.add_handler(
         MessageHandler(
-            (filters.TEXT | filters.CAPTION) & ~filters.COMMAND,
+            (filters.TEXT | filters.CAPTION) & ~filters.COMMAND & filters.UpdateType.MESSAGE,
+            handle_message,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            (filters.TEXT | filters.CAPTION) & ~filters.COMMAND & filters.UpdateType.EDITED_MESSAGE,
             handle_message,
         )
     )

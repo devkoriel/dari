@@ -49,6 +49,7 @@ def _make_text_update(user_id: int, text: str, chat_id: int = 12345, first_name:
     update.message.chat.id = chat_id
     update.message.message_id = 42
     update.message.reply_text = AsyncMock()
+    update.edited_message = None
     return update
 
 
@@ -62,6 +63,7 @@ def _make_caption_update(user_id: int, caption: str, chat_id: int = 12345, first
     update.message.chat.id = chat_id
     update.message.message_id = 43
     update.message.reply_text = AsyncMock()
+    update.edited_message = None
     return update
 
 
